@@ -1,0 +1,9 @@
+.zig-cache/
+zig-out/
+zig-pkg/
+*.swp
+*.swo
+.DS_Store
+/build/
+/result
+.direnv/

@@ -1,0 +1,26 @@
+.{
+    .name = .gpgui_free,
+    .version = "0.1.0-dev",
+    .fingerprint = 0xbdbefad86a91dcfd,
+    .minimum_zig_version = "0.15.2",
+
+    .dependencies = .{
+        // Populate the hash with:
+        //   zig fetch --save=gobject \
+        //     https://github.com/ianprime0509/zig-gobject/releases/download/v0.3.1/bindings-gnome49.tar.zst
+        .gobject = .{
+            .url = "https://github.com/ianprime0509/zig-gobject/releases/download/v0.3.1/bindings-gnome49.tar.zst",
+            .hash = "gobject-0.3.1-Skun7JC5fAFWOaM_zWo3XZAw7wPa6GYKK6U76Yy_Jkvt",
+            .lazy = false,
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "assets",
+        "LICENSE",
+        "README.md",
+    },
+}
