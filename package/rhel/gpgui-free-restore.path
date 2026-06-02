@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch for /usr/bin/gpgui going missing (upstream upgrade)
+After=local-fs.target
+
+[Path]
+PathChanged=/usr/bin/gpgui
+PathChanged=/usr/bin/gpgui-helper
+Unit=gpgui-free-restore.service
+
+[Install]
+WantedBy=multi-user.target

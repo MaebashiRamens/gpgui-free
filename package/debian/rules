@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	zig build -Doptimize=ReleaseSafe
+
+override_dh_auto_install:
+	install -Dm755 zig-out/bin/gpgui-free \
+		debian/gpgui-free/usr/bin/gpgui-free
+	install -Dm755 package/common/install-overlay.sh \
+		debian/gpgui-free/usr/lib/gpgui-free/install-overlay.sh
+	install -Dm755 package/common/remove-overlay.sh \
+		debian/gpgui-free/usr/lib/gpgui-free/remove-overlay.sh
+	install -Dm755 package/common/restore-overlay.sh \
+		debian/gpgui-free/usr/lib/gpgui-free/restore-overlay.sh
+	install -Dm644 package/debian/99-gpgui-free.apt-conf \
+		debian/gpgui-free/etc/apt/apt.conf.d/99-gpgui-free
+
+override_dh_auto_test:
+	true
+
+override_dh_auto_clean:
+	rm -rf zig-out .zig-cache

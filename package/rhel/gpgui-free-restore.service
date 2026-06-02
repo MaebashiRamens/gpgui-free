@@ -1,0 +1,7 @@
+[Unit]
+Description=Re-apply gpgui-free overlay
+ConditionPathExists=/usr/bin/gpgui-free
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/gpgui-free/restore-overlay.sh

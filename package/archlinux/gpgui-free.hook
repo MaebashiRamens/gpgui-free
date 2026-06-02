@@ -1,0 +1,12 @@
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = globalprotect-openconnect
+Target = globalprotect-openconnect-git
+
+[Action]
+Description = Restoring gpgui-free overlay
+When = PostTransaction
+Exec = /usr/lib/gpgui-free/restore-overlay.sh
+NeedsTargets

@@ -1,0 +1,19 @@
+post_install() {
+    /usr/lib/gpgui-free/install-overlay.sh
+    cat <<MSG
+gpgui-free installed.
+  /usr/bin/gpgui is now a symlink to gpgui-free.
+  /usr/bin/gpgui-helper is replaced with a no-op stub
+  (originals saved as *.proprietary).
+Restart gpservice (e.g. \`sudo systemctl restart gpservice\` or
+\`sudo pkill -SIGTERM gpservice && gpclient launch-gui\`).
+MSG
+}
+
+post_upgrade() {
+    /usr/lib/gpgui-free/install-overlay.sh
+}
+
+pre_remove() {
+    /usr/lib/gpgui-free/remove-overlay.sh
+}

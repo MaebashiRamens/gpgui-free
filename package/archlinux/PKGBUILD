@@ -1,0 +1,38 @@
+# Maintainer: gpgui-free contributors
+pkgname=gpgui-free
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Open-source GTK4 GUI for globalprotect-openconnect (replaces proprietary gpgui)'
+arch=('x86_64')
+url='https://github.com/MaebashiRamens/gpgui-free'
+license=('GPL-3.0-or-later')
+depends=('globalprotect-openconnect' 'glib2' 'gtk4' 'libadwaita' 'libsecret')
+makedepends=('zig=0.15.2' 'pkgconf' 'git')
+install=gpgui-free.install
+source=("$pkgname-$pkgver.tar.gz::https://github.com/MaebashiRamens/$pkgname/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    zig build -Doptimize=ReleaseSafe
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+
+    install -Dm755 zig-out/bin/gpgui-free \
+        "$pkgdir/usr/bin/gpgui-free"
+
+    install -Dm755 package/common/install-overlay.sh \
+        "$pkgdir/usr/lib/gpgui-free/install-overlay.sh"
+    install -Dm755 package/common/remove-overlay.sh \
+        "$pkgdir/usr/lib/gpgui-free/remove-overlay.sh"
+    install -Dm755 package/common/restore-overlay.sh \
+        "$pkgdir/usr/lib/gpgui-free/restore-overlay.sh"
+
+    install -Dm644 package/archlinux/gpgui-free.hook \
+        "$pkgdir/usr/share/libalpm/hooks/99-gpgui-free.hook"
+
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}

@@ -1,0 +1,29 @@
+Source: gpgui-free
+Section: net
+Priority: optional
+Maintainer: gpgui-free contributors <noreply@example.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ zig (>= 0.15.2),
+ pkg-config,
+ libgtk-4-dev,
+ libadwaita-1-dev,
+ libsecret-1-dev
+Standards-Version: 4.6.2
+
+Package: gpgui-free
+Architecture: amd64
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ globalprotect-openconnect (>= 2.5.0),
+ libglib2.0-0,
+ libgtk-4-1,
+ libadwaita-1-0,
+ libsecret-1-0
+Description: Open-source GTK4 GUI for globalprotect-openconnect
+ Drop-in replacement for the proprietary `gpgui` binary that
+ globalprotect-openconnect downloads from GitHub Releases. Installs
+ itself as /usr/bin/gpgui via a symlink and neutralizes
+ /usr/bin/gpgui-helper so that the proprietary binary is never
+ re-fetched.

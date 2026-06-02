@@ -1,0 +1,5 @@
+// Reapply gpgui-free overlay after upstream globalprotect-openconnect
+// upgrades remove /usr/bin/gpgui via their postrm hook.
+DPkg::Post-Invoke {
+    "if [ -x /usr/lib/gpgui-free/restore-overlay.sh ]; then /usr/lib/gpgui-free/restore-overlay.sh; fi";
+};
