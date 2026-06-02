@@ -56,6 +56,7 @@
           gobject-introspection
           git
           jq
+          hadolint
         ];
 
         buildInputs = with pkgs; [

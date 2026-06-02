@@ -1,0 +1,8 @@
+ignored:
+    - DL3008 # apt-get: pin versions
+    - DL3013 # pip: pin versions
+    - DL3018 # apk add: pin versions
+    - DL3041 # dnf install: pin versions
+    - DL3007 # :latest tag (Arch/Fedora rolling distros)
+    - DL3059 # multiple consecutive RUN
+    - SC2016 # single-quoted literal `$var` (sed patterns)
