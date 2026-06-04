@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=GlobalProtect (gpgui-free)
+GenericName=VPN Client
+Comment=Open-source GUI for globalprotect-openconnect
+Exec=gpgui-free
+Icon=gpgui-free
+Terminal=false
+Categories=Network;
+Keywords=VPN;GlobalProtect;openconnect;
+StartupNotify=true
+StartupWMClass=gpgui-free

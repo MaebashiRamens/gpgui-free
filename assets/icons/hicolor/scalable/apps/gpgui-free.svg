@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- B2: larger padlock, generous padding by widening the window -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+    <rect width="128" height="128" rx="20" fill="#1a1626"/>
+    <rect x="14" y="22" width="100" height="84" rx="7"
+                fill="none" stroke="#ffffff" stroke-width="3" opacity="0.5"/>
+    <circle cx="22" cy="32" r="3" fill="#e01b24"/>
+    <circle cx="32" cy="32" r="3" fill="#f5c211"/>
+    <circle cx="42" cy="32" r="3" fill="#33d17a"/>
+    <line x1="14" y1="42" x2="114" y2="42" stroke="#ffffff" stroke-width="1.5" opacity="0.4"/>
+    <!-- body region 42-106 (h=64); padlock total h ~36, centered around y=74 -->
+    <path d="M52 72 V62 C52 54 56 50 64 50 C72 50 76 54 76 62 V72"
+                fill="none" stroke="#f5c211" stroke-width="5" stroke-linecap="round"/>
+    <rect x="48" y="72" width="32" height="24" rx="4" fill="#f5c211"/>
+    <circle cx="64" cy="82" r="3" fill="#1a1626"/>
+    <rect x="62.5" y="82" width="3" height="8" fill="#1a1626"/>
+</svg>
