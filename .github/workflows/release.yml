@@ -1,0 +1,129 @@
+name: Release
+
+on:
+    push:
+        tags: ["v*"]
+    workflow_dispatch:
+        inputs:
+            version:
+                description: "Version to build (without leading v)"
+                required: true
+                default: "0.1.0"
+
+permissions:
+    contents: write
+    id-token: write
+
+jobs:
+    distro-packages:
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                distro: [archlinux, debian, rhel]
+        steps:
+            - uses: actions/checkout@v5
+            - uses: docker/setup-buildx-action@v3
+            - id: ver
+              run: |
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                      echo "v=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+                  fi
+            - uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  file: package/${{ matrix.distro }}/docker/build.Dockerfile
+                  target: export
+                  build-args: PKGVER=${{ steps.ver.outputs.v }}
+                  outputs: type=local,dest=package/${{ matrix.distro }}/docker/out
+                  cache-from: type=gha,scope=${{ matrix.distro }}-build
+                  cache-to: type=gha,scope=${{ matrix.distro }}-build,mode=max
+            - uses: docker/build-push-action@v6
+              with:
+                  context: package/${{ matrix.distro }}/docker
+                  file: package/${{ matrix.distro }}/docker/test.Dockerfile
+                  tags: gpgui-free-${{ matrix.distro }}-test:latest
+                  load: true
+                  cache-from: type=gha,scope=${{ matrix.distro }}-test
+                  cache-to: type=gha,scope=${{ matrix.distro }}-test,mode=max
+            - run: docker run --rm gpgui-free-${{ matrix.distro }}-test:latest
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: pkg-${{ matrix.distro }}
+                  path: package/${{ matrix.distro }}/docker/out/*
+
+    appimage:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - uses: docker/setup-buildx-action@v3
+            - id: ver
+              run: |
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                      echo "v=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+                  fi
+            - uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  file: package/appimage/docker/build.Dockerfile
+                  target: export
+                  build-args: PKGVER=${{ steps.ver.outputs.v }}
+                  outputs: type=local,dest=package/appimage/docker/out
+                  cache-from: type=gha,scope=appimage-build
+                  cache-to: type=gha,scope=appimage-build,mode=max
+            - uses: docker/build-push-action@v6
+              with:
+                  context: package/appimage/docker
+                  file: package/appimage/docker/test.Dockerfile
+                  tags: gpgui-free-appimage-test:latest
+                  load: true
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: appimage
+                  path: package/appimage/docker/out/*
+
+    source:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - id: ver
+              run: |
+                  if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+                      echo "v=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "v=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+                  fi
+            - run: |
+                  V="${{ steps.ver.outputs.v }}"
+                  git archive --format=tar.gz \
+                      --prefix="gpgui-free-${V}/" \
+                      -o "gpgui-free-${V}.tar.gz" HEAD
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: source
+                  path: gpgui-free-*.tar.gz
+
+    release:
+        needs: [distro-packages, appimage, source]
+        runs-on: ubuntu-latest
+        if: github.event_name == 'push'
+        steps:
+            - uses: actions/download-artifact@v4
+              with:
+                  path: dist
+                  merge-multiple: true
+            - uses: sigstore/cosign-installer@v3
+            - run: |
+                  cd dist
+                  sha256sum * > SHA256SUMS
+                  cosign sign-blob --yes \
+                      --bundle SHA256SUMS.cosign.bundle SHA256SUMS
+            - uses: softprops/action-gh-release@v2
+              with:
+                  files: dist/*
+                  generate_release_notes: true
+                  fail_on_unmatched_files: true

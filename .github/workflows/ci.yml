@@ -1,0 +1,47 @@
+name: CI
+
+on:
+    push:
+        branches: [master, main]
+    pull_request:
+
+permissions:
+    contents: read
+
+jobs:
+    format:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - uses: DeterminateSystems/nix-installer-action@v22
+            - uses: nix-community/cache-nix-action@v7
+              with:
+                  primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', 'flake.nix', 'treefmt.nix') }}
+                  restore-prefixes-first-match: nix-${{ runner.os }}-
+                  gc-max-store-size-linux: 2G
+                  purge: true
+            - run: nix --accept-flake-config flake check --print-build-logs
+
+    hadolint:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - uses: hadolint/hadolint-action@v3.3.0
+              with:
+                  recursive: true
+                  config: ./.hadolint.yaml
+                  dockerfile: "**/*.Dockerfile"
+
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v5
+            - uses: mlugg/setup-zig@v2
+              with:
+                  version: 0.15.2
+            - run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends \
+                      pkg-config libgtk-4-dev libadwaita-1-dev libsecret-1-dev libglib2.0-dev
+            - run: zig build test
+            - run: zig build
