@@ -26,8 +26,9 @@ RUN cp -r /home/builder/repo "/tmp/gpgui-free-${PKGVER}" \
 COPY --chown=builder:builder package/archlinux/PKGBUILD ./
 COPY --chown=builder:builder package/archlinux/gpgui-free.install ./
 
-# PKGBUILD source= fetches from GitHub; redirect to the local tarball.
-RUN sed -i 's|https://github.com/MaebashiRamens/\$pkgname/archive/v\$pkgver.tar.gz|file:///home/builder/build/gpgui-free-0.1.0.tar.gz|' PKGBUILD
+# Override pkgver + redirect source= to the local tarball.
+RUN sed -i "s/^pkgver=.*/pkgver=${PKGVER}/" PKGBUILD \
+    && sed -i "s|https://github.com/MaebashiRamens/\$pkgname/archive/v\$pkgver.tar.gz|file:///home/builder/build/gpgui-free-${PKGVER}.tar.gz|" PKGBUILD
 
 RUN makepkg --noconfirm --skipchecksums --nodeps
 

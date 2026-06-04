@@ -24,7 +24,8 @@ RUN cp -r /tmp/repo "/tmp/gpgui-free-${PKGVER}" \
     && cp /tmp/repo/package/rhel/gpgui-free-restore.path /root/rpmbuild/SOURCES/ \
     && cp /tmp/repo/package/rhel/gpgui-free-restore.service /root/rpmbuild/SOURCES/
 
-RUN rpmbuild -ba --nodeps /root/rpmbuild/SPECS/gpgui-free.spec
+RUN sed -i "s/^Version:.*/Version:        ${PKGVER}/" /root/rpmbuild/SPECS/gpgui-free.spec \
+    && rpmbuild -ba --nodeps /root/rpmbuild/SPECS/gpgui-free.spec
 
 FROM scratch AS export
 COPY --from=builder /root/rpmbuild/RPMS/x86_64/gpgui-free-*.rpm /
