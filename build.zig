@@ -43,6 +43,10 @@ pub fn build(b: *std.Build) !void {
     });
     b.installArtifact(exe);
 
+    b.installFile("assets/applications/gpgui-free.desktop", "share/applications/gpgui-free.desktop");
+    b.installFile("assets/icons/hicolor/scalable/apps/gpgui-free.svg", "share/icons/hicolor/scalable/apps/gpgui-free.svg");
+    b.installFile("assets/icons/hicolor/256x256/apps/gpgui-free.png", "share/icons/hicolor/256x256/apps/gpgui-free.png");
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
