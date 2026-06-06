@@ -297,6 +297,8 @@ pub const App = struct {
                 .client_version = "6.3.0-33",
                 .os = "Linux",
                 .vpnc_script = env.vpnc_script,
+                // gpservice drops csd_wrapper when `hip` is false.
+                .hip = true,
                 .csd_wrapper = env.csd_wrapper orelse hip_wrapper_default,
             },
         } };
