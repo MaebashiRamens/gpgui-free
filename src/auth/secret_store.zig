@@ -94,6 +94,7 @@ pub const SecretStore = struct {
         var err: ?*glib.Error = null;
         const ok = secret.passwordStorevSync(&schema, tbl, null, label_z, password_z, null, &err);
         if (ok == 0) {
+            logGlibError("password store", err);
             if (err) |e2| glib.Error.free(e2);
             return error.KeyringUnavailable;
         }
@@ -113,6 +114,7 @@ pub const SecretStore = struct {
         var err: ?*glib.Error = null;
         const raw_password = secret.passwordLookupvSync(&schema, tbl, null, &err) orelse {
             if (err) |e| {
+                logGlibError("password lookup", err);
                 glib.Error.free(e);
                 return error.KeyringUnavailable;
             }
@@ -148,6 +150,7 @@ pub const SecretStore = struct {
         var err: ?*glib.Error = null;
         const removed = secret.passwordClearvSync(&schema, tbl, null, &err);
         if (err) |e| {
+            logGlibError("password clear", err);
             glib.Error.free(e);
             return error.KeyringUnavailable;
         }
@@ -158,4 +161,12 @@ pub const SecretStore = struct {
         cookie: []const u8,
         expires_at_unix: i64,
     };
+
+    fn logGlibError(op: []const u8, err: ?*glib.Error) void {
+        if (err) |e| if (e.f_message) |msg| {
+            std.log.warn("secret_store: {s} failed: {s}", .{ op, std.mem.span(msg) });
+            return;
+        };
+        std.log.warn("secret_store: {s} failed (no glib message)", .{op});
+    }
 };
