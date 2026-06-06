@@ -15,6 +15,9 @@ pub const Config = struct {
     last_mode: Mode = .gateway,
     /// Stale when `last_portal` changes — caller must drop it then.
     last_user: ?[]const u8 = null,
+    /// Asks gpservice to extend the session instead of dropping the
+    /// tunnel at `user_expires`. Wire name: `allowExtendSession`.
+    allow_extend_session: bool = false,
 };
 
 /// Caller calls `parsed.deinit()`.

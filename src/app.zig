@@ -277,10 +277,18 @@ pub const App = struct {
             }) catch |err|
                 std.log.warn("cookie cache save failed: {s}", .{@errorName(err)});
         }
+        // Preserve user-set value across the save below.
+        var allow_extend_session = false;
+        if (config.load(self.allocator)) |parsed| {
+            defer parsed.deinit();
+            allow_extend_session = parsed.value.allow_extend_session;
+        } else |_| {}
+
         config.save(self.allocator, .{
             .last_portal = portal,
             .last_mode = if (std.mem.eql(u8, portal, gateway_addr)) .gateway else .portal,
             .last_user = cred.username,
+            .allow_extend_session = allow_extend_session,
         }) catch |err|
             std.log.warn("config save failed: {s}", .{@errorName(err)});
 
@@ -300,6 +308,7 @@ pub const App = struct {
                 // gpservice drops csd_wrapper when `hip` is false.
                 .hip = true,
                 .csd_wrapper = env.csd_wrapper orelse hip_wrapper_default,
+                .allow_extend_session = allow_extend_session,
             },
         } };
 
