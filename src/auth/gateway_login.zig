@@ -141,7 +141,7 @@ fn collectArguments(
 ) !void {
     var i: usize = 0;
     while (std.mem.indexOfPos(u8, xml, i, "<argument")) |start| {
-        const tag_end = std.mem.indexOfPos(u8, xml, start, ">") orelse break;
+        const tag_end = std.mem.indexOfScalarPos(u8, xml, start, '>') orelse break;
         const open_end = tag_end + 1;
         if (start > 0 and xml[tag_end - 1] == '/') {
             try out.append(allocator, "");

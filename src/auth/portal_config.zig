@@ -131,7 +131,7 @@ fn parseGateways(allocator: std.mem.Allocator, xml: []const u8) ![]Gateway {
     var i: usize = 0;
     while (std.mem.indexOfPos(u8, block, i, "<entry name=\"")) |start| {
         const name_start = start + "<entry name=\"".len;
-        const name_end = std.mem.indexOfPos(u8, block, name_start, "\"") orelse break;
+        const name_end = std.mem.indexOfScalarPos(u8, block, name_start, '"') orelse break;
         const address = block[name_start..name_end];
 
         var label = address;
