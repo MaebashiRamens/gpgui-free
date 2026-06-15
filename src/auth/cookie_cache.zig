@@ -87,8 +87,9 @@ pub const MemoryStore = struct {
     fn saveImpl(ctx: *anyopaque, e: Entry) Error!void {
         const self: *MemoryStore = @ptrCast(@alignCast(ctx));
         if (self.findIndex(e.portal, e.user)) |i| {
+            const cookie = try self.allocator.dupe(u8, e.cookie);
             self.allocator.free(self.entries.items[i].cookie);
-            self.entries.items[i].cookie = try self.allocator.dupe(u8, e.cookie);
+            self.entries.items[i].cookie = cookie;
             self.entries.items[i].expires_at_unix = e.expires_at_unix;
             return;
         }
