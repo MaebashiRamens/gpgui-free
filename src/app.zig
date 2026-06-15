@@ -5,6 +5,7 @@ const std = @import("std");
 const adw = @import("adw");
 const gio = @import("gio");
 const glib = @import("glib");
+const gtk = @import("gtk");
 
 const Window = @import("ui/window.zig").Window;
 const Tray = @import("ui/tray.zig").Tray;
@@ -52,6 +53,10 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         if (self.client) |*c| c.stop();
+        if (self.window) |w| {
+            self.window = null;
+            w.deinit(true);
+        }
         if (self.tray) |t| t.deinit();
         if (self.auth_executable) |s| self.allocator.free(s);
         if (self.vpnc_script) |s| self.allocator.free(s);
@@ -86,6 +91,13 @@ pub const App = struct {
             .ctx = self,
         });
         self.window = w;
+        _ = gtk.Window.signals.close_request.connect(
+            w.window.as(gtk.Window),
+            *App,
+            &onWindowClose,
+            self,
+            .{},
+        );
 
         if (config.load(self.allocator)) |parsed| {
             defer parsed.deinit();
@@ -114,6 +126,16 @@ pub const App = struct {
         } else {
             w.setStatus(.service_unreachable);
         }
+    }
+
+    /// Drop our reference before GTK destroys the window; returning
+    /// PROPAGATE lets the default handler tear it down and quit the app.
+    fn onWindowClose(_: *gtk.Window, self: *App) callconv(.c) c_int {
+        if (self.window) |w| {
+            self.window = null;
+            w.deinit(false);
+        }
+        return 0;
     }
 
     fn onConnectClicked(ctx: *anyopaque, portal: [*:0]const u8, mode: Mode) void {
@@ -301,20 +323,22 @@ pub const App = struct {
 
         const gw: protocol.Gateway = .{ .name = "default", .address = gateway_addr };
         const gateways = [_]protocol.Gateway{gw};
-        const req: protocol.WsRequest = .{ .Connect = .{
-            .info = .{ .portal = portal, .gateway = gw, .gateways = &gateways },
-            .args = .{
-                .cookie = oc_cookie,
-                .user_agent = "PAN GlobalProtect",
-                .client_version = "6.3.0-33",
-                .os = "Linux",
-                .vpnc_script = env.vpnc_script,
-                // gpservice drops csd_wrapper when `hip` is false.
-                .hip = true,
-                .csd_wrapper = env.csd_wrapper orelse hip_wrapper_default,
-                .allow_extend_session = allow_extend_session,
+        const req: protocol.WsRequest = .{
+            .Connect = .{
+                .info = .{ .portal = portal, .gateway = gw, .gateways = &gateways },
+                .args = .{
+                    .cookie = oc_cookie,
+                    .user_agent = "PAN GlobalProtect",
+                    .client_version = "6.3.0-33",
+                    .os = "Linux",
+                    .vpnc_script = env.vpnc_script,
+                    // gpservice drops csd_wrapper when `hip` is false.
+                    .hip = true,
+                    .csd_wrapper = env.csd_wrapper orelse hip_wrapper_default,
+                    .allow_extend_session = allow_extend_session,
+                },
             },
-        } };
+        };
 
         const c = if (self.client) |*p| p else return error.ServiceNotRunning;
         try c.send(req);

@@ -93,6 +93,13 @@ pub const Window = struct {
         return self;
     }
 
+    /// Destroys the GTK window and frees the struct. `destroy_gtk` is
+    /// false when GTK already tore the window down (close-request path).
+    pub fn deinit(self: *Window, destroy_gtk: bool) void {
+        if (destroy_gtk) gtk.Window.destroy(self.window.as(gtk.Window));
+        std.heap.c_allocator.destroy(self);
+    }
+
     pub fn present(self: *Window) void {
         gtk.Window.present(self.window.as(gtk.Window));
     }
