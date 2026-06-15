@@ -2,6 +2,7 @@
 //! Mirrors `crates/gpapi/src/portal/config.rs`.
 
 const std = @import("std");
+const url_encoding = @import("url_encoding.zig");
 
 pub const Gateway = struct {
     /// `<description>` or, when absent, the address.
@@ -97,19 +98,9 @@ fn buildFormBody(allocator: std.mem.Allocator, p: Params) ![]u8 {
 fn appendPair(w: *std.Io.Writer, first: *bool, key: []const u8, value: []const u8) !void {
     if (!first.*) try w.writeByte('&');
     first.* = false;
-    try writeUrlEncoded(w, key);
+    try url_encoding.writeUrlEncoded(w, key);
     try w.writeByte('=');
-    try writeUrlEncoded(w, value);
-}
-
-fn writeUrlEncoded(w: *std.Io.Writer, s: []const u8) !void {
-    for (s) |c| {
-        if (std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == '~') {
-            try w.writeByte(c);
-        } else {
-            try w.print("%{X:0>2}", .{c});
-        }
-    }
+    try url_encoding.writeUrlEncoded(w, value);
 }
 
 /// Bounded to `<gateways>…</gateways>` — other `<entry name="…">`

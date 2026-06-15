@@ -2,6 +2,7 @@
 //! openconnect `--cookie` string. Mirrors `crates/gpapi/src/gateway/login.rs`.
 
 const std = @import("std");
+const url_encoding = @import("url_encoding.zig");
 
 pub const Params = struct {
     gateway: []const u8,
@@ -81,9 +82,9 @@ fn buildFormBody(allocator: std.mem.Allocator, p: Params) ![]u8 {
 
 fn appendPair(w: *std.Io.Writer, first: bool, key: []const u8, value: []const u8) !void {
     if (!first) try w.writeByte('&');
-    try writeUrlEncoded(w, key);
+    try url_encoding.writeUrlEncoded(w, key);
     try w.writeByte('=');
-    try writeUrlEncoded(w, value);
+    try url_encoding.writeUrlEncoded(w, value);
 }
 
 const argument_keys = [_]struct { index: usize, key: []const u8, required: bool }{
@@ -118,7 +119,7 @@ fn buildOpenconnectCookie(allocator: std.mem.Allocator, xml: []const u8, compute
             first = false;
             try aw.writer.writeAll(spec.key);
             try aw.writer.writeByte('=');
-            try writeUrlEncoded(&aw.writer, decoded);
+            try url_encoding.writeUrlEncoded(&aw.writer, decoded);
         } else if (spec.required) {
             return if (std.mem.eql(u8, spec.key, "authcookie")) error.MissingAuthcookie else error.MissingUser;
         }
@@ -126,7 +127,7 @@ fn buildOpenconnectCookie(allocator: std.mem.Allocator, xml: []const u8, compute
 
     if (!first) try aw.writer.writeByte('&');
     try aw.writer.writeAll("computer=");
-    try writeUrlEncoded(&aw.writer, computer);
+    try url_encoding.writeUrlEncoded(&aw.writer, computer);
     return try allocator.dupe(u8, aw.written());
 }
 
@@ -158,20 +159,6 @@ fn collectArguments(
         try out.append(allocator, xml[open_end..close]);
         i = close + "</argument>".len;
     }
-}
-
-fn writeUrlEncoded(w: *std.Io.Writer, s: []const u8) !void {
-    for (s) |c| {
-        if (isUnreserved(c)) {
-            try w.writeByte(c);
-        } else {
-            try w.print("%{X:0>2}", .{c});
-        }
-    }
-}
-
-fn isUnreserved(c: u8) bool {
-    return std.ascii.isAlphanumeric(c) or c == '-' or c == '_' or c == '.' or c == '~';
 }
 
 fn urlDecode(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
