@@ -35,3 +35,40 @@ test "parseWsEvent rejects unknown unit variant" {
         protocol.parseWsEvent(std.testing.allocator, "\"NotAThing\""),
     );
 }
+
+fn stringify(value: anytype) !std.Io.Writer.Allocating {
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    errdefer aw.deinit();
+    try std.json.Stringify.value(value, .{}, &aw.writer);
+    return aw;
+}
+
+test "ConnectArgs.jsonStringify renames allow_extend_session" {
+    var aw = try stringify(protocol.ConnectArgs{
+        .cookie = "c",
+        .hip = true,
+        .allow_extend_session = true,
+    });
+    defer aw.deinit();
+    const json = aw.written();
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"allowExtendSession\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "allow_extend_session") == null);
+}
+
+test "Gateway.jsonStringify emits priorityRules" {
+    var aw = try stringify(protocol.Gateway{
+        .name = "gw1",
+        .address = "203.0.113.10",
+        .priority_rules = &.{.{ .name = "r1", .priority = 1 }},
+    });
+    defer aw.deinit();
+    const json = aw.written();
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"priorityRules\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "priority_rules") == null);
+}
+
+test "DisconnectRequest serializes to null" {
+    var aw = try stringify(protocol.DisconnectRequest{});
+    defer aw.deinit();
+    try std.testing.expectEqualStrings("null", aw.written());
+}
