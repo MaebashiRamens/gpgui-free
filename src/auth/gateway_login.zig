@@ -27,7 +27,10 @@ pub fn login(allocator: std.mem.Allocator, params: Params) Error![]u8 {
     defer allocator.free(url);
 
     const body = try buildFormBody(allocator, params);
-    defer allocator.free(body);
+    defer {
+        std.crypto.secureZero(u8, body);
+        allocator.free(body);
+    }
 
     var response: std.Io.Writer.Allocating = .init(allocator);
     defer response.deinit();
@@ -107,7 +110,10 @@ fn buildOpenconnectCookie(allocator: std.mem.Allocator, xml: []const u8, compute
         const normalized = normalize(raw);
         if (normalized) |value| {
             const decoded = try urlDecode(allocator, value);
-            defer allocator.free(decoded);
+            defer {
+                std.crypto.secureZero(u8, decoded);
+                allocator.free(decoded);
+            }
             if (!first) try aw.writer.writeByte('&');
             first = false;
             try aw.writer.writeAll(spec.key);

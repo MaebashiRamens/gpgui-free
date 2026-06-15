@@ -201,6 +201,7 @@ pub const App = struct {
 
         fn deinit(self: Credential, allocator: std.mem.Allocator) void {
             allocator.free(self.username);
+            std.crypto.secureZero(u8, self.cookie);
             allocator.free(self.cookie);
         }
     };
@@ -264,7 +265,10 @@ pub const App = struct {
             std.log.warn("gateway_login failed for {s}: {s}", .{ gateway_addr, @errorName(err) });
             return err;
         };
-        defer self.allocator.free(oc_cookie);
+        defer {
+            std.crypto.secureZero(u8, oc_cookie);
+            self.allocator.free(oc_cookie);
+        }
 
         // Gateway accepted the cookie; persist so the next Connect can skip SAML.
         if (!cred.from_cache) {
