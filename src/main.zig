@@ -40,6 +40,7 @@ pub fn main() !void {
 
     if (args.api_key_on_stdin) {
         var key: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &key);
         try readApiKey(&key);
         app.attachApiKey(&key);
     }
@@ -49,6 +50,7 @@ pub fn main() !void {
 
 fn readApiKey(out: *[32]u8) !void {
     var encoded: [256]u8 = undefined;
+    defer std.crypto.secureZero(u8, &encoded);
     const n = try std.fs.File.stdin().read(&encoded);
 
     const trimmed = std.mem.trim(u8, encoded[0..n], " \t\r\n");
