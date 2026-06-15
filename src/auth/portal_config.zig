@@ -114,7 +114,7 @@ fn writeUrlEncoded(w: *std.Io.Writer, s: []const u8) !void {
 
 /// Bounded to `<gateways>…</gateways>` — other `<entry name="…">`
 /// elements (e.g. trusted-app lists) live elsewhere in the config.
-fn parseGateways(allocator: std.mem.Allocator, xml: []const u8) ![]Gateway {
+pub fn parseGateways(allocator: std.mem.Allocator, xml: []const u8) ![]Gateway {
     var list: std.ArrayList(Gateway) = .empty;
     errdefer {
         for (list.items) |g| {
@@ -134,19 +134,22 @@ fn parseGateways(allocator: std.mem.Allocator, xml: []const u8) ![]Gateway {
         const name_end = std.mem.indexOfScalarPos(u8, block, name_start, '"') orelse break;
         const address = block[name_start..name_end];
 
+        const entry_end = std.mem.indexOfPos(u8, block, name_end, "</entry>") orelse block.len;
+
         var label = address;
         if (std.mem.indexOfPos(u8, block, name_end, "<description>")) |d_start_marker| {
             const d_start = d_start_marker + "<description>".len;
             if (std.mem.indexOfPos(u8, block, d_start, "</description>")) |d_end| {
-                if (d_end > d_start) label = block[d_start..d_end];
+                if (d_end <= entry_end and d_end > d_start) label = block[d_start..d_end];
             }
         }
 
-        try list.append(allocator, .{
-            .label = try allocator.dupe(u8, label),
-            .address = try allocator.dupe(u8, address),
-        });
-        i = name_end;
+        const label_dup = try allocator.dupe(u8, label);
+        errdefer allocator.free(label_dup);
+        const address_dup = try allocator.dupe(u8, address);
+        errdefer allocator.free(address_dup);
+        try list.append(allocator, .{ .label = label_dup, .address = address_dup });
+        i = entry_end;
     }
 
     if (list.items.len == 0) return error.NoGateways;
