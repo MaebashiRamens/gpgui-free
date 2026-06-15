@@ -32,8 +32,7 @@ pub const Client = struct {
     reader: ?std.Thread = null,
     write_mu: std.Thread.Mutex = .{},
 
-    cb: ?EventCallback = null,
-    cb_ctx: ?*anyopaque = null,
+    cb: ?struct { ctx: *anyopaque, f: EventCallback } = null,
 
     const State = enum(u8) { idle, running, stopping };
 
@@ -50,8 +49,7 @@ pub const Client = struct {
     }
 
     pub fn setEventCallback(self: *Client, ctx: *anyopaque, cb: EventCallback) void {
-        self.cb_ctx = ctx;
-        self.cb = cb;
+        self.cb = .{ .ctx = ctx, .f = cb };
     }
 
     pub fn start(self: *Client) Error!void {
@@ -61,6 +59,11 @@ pub const Client = struct {
         };
 
         self.conn = try ws.Conn.connect(self.allocator, self.host, info.port, "/ws");
+        errdefer {
+            self.conn.?.close();
+            self.conn = null;
+            self.state.store(.idle, .release);
+        }
         self.state.store(.running, .release);
         self.reader = try std.Thread.spawn(.{}, readerLoop, .{self});
     }
@@ -68,11 +71,11 @@ pub const Client = struct {
     pub fn stop(self: *Client) void {
         if (self.state.swap(.stopping, .acq_rel) != .running) return;
         if (self.conn) |*c| c.close();
-        self.conn = null;
         if (self.reader) |t| {
             t.join();
             self.reader = null;
         }
+        self.conn = null;
         self.state.store(.idle, .release);
     }
 
@@ -115,7 +118,7 @@ pub const Client = struct {
             };
             defer parsed.deinit();
 
-            if (self.cb) |cb| cb(self.cb_ctx.?, parsed.value);
+            if (self.cb) |cb| cb.f(cb.ctx, parsed.value);
         }
     }
 };
