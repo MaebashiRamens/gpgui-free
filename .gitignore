@@ -7,3 +7,4 @@ zig-pkg/
 /build/
 /result
 .direnv/
+/scratch/
