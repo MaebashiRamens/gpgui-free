@@ -42,6 +42,28 @@ pub const App = struct {
 
     secret_store: SecretStore,
 
+    /// Last successful connect, replayed on `ResumeConnection`. Written by
+    /// connect jobs (`attemptConnect`), read by `beginReconnect`.
+    last_connect_lock: std.Thread.Mutex = .{},
+    last_connect: ?LastConnect = null,
+
+    /// GTK-thread-only mirror of the VPN status; gates auto-reconnect.
+    current_status: state_mod.Status = .disconnected,
+    /// True while an auto-reconnect job is in flight — dedupes a burst of
+    /// `ResumeConnection` events into a single reconnect.
+    reconnecting: std.atomic.Value(bool) = .init(false),
+
+    const LastConnect = struct {
+        portal: []u8,
+        mode: Mode,
+        user: ?[]u8,
+
+        fn free(self: LastConnect, allocator: std.mem.Allocator) void {
+            allocator.free(self.portal);
+            if (self.user) |u| allocator.free(u);
+        }
+    };
+
     pub fn init(allocator: std.mem.Allocator, minimized: bool) App {
         return .{
             .allocator = allocator,
@@ -61,6 +83,7 @@ pub const App = struct {
         if (self.auth_executable) |s| self.allocator.free(s);
         if (self.vpnc_script) |s| self.allocator.free(s);
         if (self.csd_wrapper_from_env) |s| self.allocator.free(s);
+        if (self.last_connect) |lc| lc.free(self.allocator);
         self.secret_store.deinit();
         self.adw_app.unref();
     }
@@ -163,7 +186,7 @@ pub const App = struct {
         }) catch |err|
             std.log.warn("config save failed: {s}", .{@errorName(err)});
 
-        self.startConnect(portal_slice, mode, preserved_user);
+        self.startConnect(portal_slice, mode, preserved_user, false);
     }
 
     fn onDisconnectClicked(ctx: *anyopaque) void {
@@ -180,23 +203,28 @@ pub const App = struct {
     }
 
     /// Spawns the SAML/login worker so the UI thread stays responsive.
-    fn startConnect(self: *App, portal: []const u8, mode: Mode, cached_user: ?[]u8) void {
+    /// `reconnect` jobs retry unreachable gateways with backoff and clear
+    /// the in-flight guard when done.
+    fn startConnect(self: *App, portal: []const u8, mode: Mode, cached_user: ?[]u8, reconnect: bool) void {
         const portal_owned = self.allocator.dupe(u8, portal) catch {
             if (cached_user) |u| self.allocator.free(u);
+            if (reconnect) self.reconnecting.store(false, .release);
             return;
         };
 
         const job = self.allocator.create(ConnectJob) catch {
             self.allocator.free(portal_owned);
             if (cached_user) |u| self.allocator.free(u);
+            if (reconnect) self.reconnecting.store(false, .release);
             return;
         };
-        job.* = .{ .app = self, .portal = portal_owned, .mode = mode, .cached_user = cached_user };
+        job.* = .{ .app = self, .portal = portal_owned, .mode = mode, .cached_user = cached_user, .reconnect = reconnect };
 
         const thread = std.Thread.spawn(.{}, runConnectJob, .{job}) catch |err| {
             std.log.err("connect thread spawn failed: {s}", .{@errorName(err)});
             self.allocator.free(portal_owned);
             if (cached_user) |u| self.allocator.free(u);
+            if (reconnect) self.reconnecting.store(false, .release);
             self.allocator.destroy(job);
             return;
         };
@@ -208,6 +236,7 @@ pub const App = struct {
         portal: []u8,
         mode: Mode,
         cached_user: ?[]u8,
+        reconnect: bool,
 
         fn deinit(self: *ConnectJob) void {
             self.app.allocator.free(self.portal);
@@ -228,15 +257,65 @@ pub const App = struct {
         }
     };
 
-    fn runConnectJob(job: *ConnectJob) void {
-        defer job.deinit();
+    const Outcome = enum { connected, retry, fatal };
 
+    /// Transient reachability gaps after a network-up event usually clear
+    /// within the first retry or two.
+    const reconnect_max_tries: u8 = 3;
+
+    /// Backoff before the (0-based) `attempt`-th retry: 2s, 4s, 8s, …
+    fn reconnectDelayNs(attempt: u6) u64 {
+        return (@as(u64, 2) << attempt) * std.time.ns_per_s;
+    }
+
+    fn runConnectJob(job: *ConnectJob) void {
+        defer {
+            if (job.reconnect) job.app.reconnecting.store(false, .release);
+            job.deinit();
+        }
+
+        const max: u8 = if (job.reconnect) reconnect_max_tries else 1;
+        var tries: u8 = 0;
+        while (true) {
+            switch (attemptOnce(job)) {
+                .connected => return,
+                .fatal => break,
+                .retry => {
+                    tries += 1;
+                    if (tries >= max) {
+                        std.log.warn("gateway unreachable after {d} attempt(s); giving up", .{tries});
+                        break;
+                    }
+                    std.Thread.sleep(reconnectDelayNs(@intCast(tries - 1)));
+                },
+            }
+        }
+        // A reconnect that never connected leaves the UI on "Reconnecting…";
+        // no `VpnState` will arrive to clear it, so reset here.
+        if (job.reconnect) job.app.postStatus(.disconnected);
+    }
+
+    fn postStatus(self: *App, status: state_mod.Status) void {
+        const msg = self.allocator.create(StatusUpdate) catch return;
+        msg.* = .{ .app = self, .status = status };
+        _ = glib.idleAddOnce(&applyStatusUpdate, msg);
+    }
+
+    test reconnectDelayNs {
+        try std.testing.expectEqual(@as(u64, 2 * std.time.ns_per_s), reconnectDelayNs(0));
+        try std.testing.expectEqual(@as(u64, 4 * std.time.ns_per_s), reconnectDelayNs(1));
+        try std.testing.expectEqual(@as(u64, 8 * std.time.ns_per_s), reconnectDelayNs(2));
+    }
+
+    /// One full resolve → auth → connect pass. `.retry` is retryable
+    /// (network not ready yet); `.fatal` is not (auth/config error).
+    fn attemptOnce(job: *ConnectJob) Outcome {
         const auth_binary = job.app.snapshotAuthBinary() catch gpauth.default_binary;
         defer if (!std.mem.eql(u8, auth_binary, gpauth.default_binary)) job.app.allocator.free(auth_binary);
 
         const gateway_addr = job.app.resolveGateway(auth_binary, job.portal, job.mode) catch |err| {
             std.log.warn("gateway resolution failed for {s}: {s}", .{ job.portal, @errorName(err) });
-            return;
+            return .fatal;
         };
         defer job.app.allocator.free(gateway_addr);
 
@@ -250,13 +329,15 @@ pub const App = struct {
                     hint_user = null;
                     continue;
                 },
+                error.Unreachable => return .retry,
                 else => {
                     std.log.warn("connect attempt failed: {s}", .{@errorName(err)});
-                    return;
+                    return .fatal;
                 },
             };
-            if (done) return;
+            if (done) return .connected;
         }
+        return .fatal;
     }
 
     /// `error.CachedCookieRejected` means a cached cookie was rejected;
@@ -279,6 +360,9 @@ pub const App = struct {
             .prelogin_cookie = cred.cookie,
             .computer = hostname,
         }) catch |err| {
+            // A network gap (post-resume) must not be mistaken for a bad
+            // cookie — keep the cached cookie and let the caller back off.
+            if (err == error.Unreachable) return error.Unreachable;
             if (cred.from_cache) {
                 std.log.warn("cached cookie rejected by {s}; forgetting and retrying via SAML", .{gateway_addr});
                 self.secret_store.store().forget(gateway_addr, cred.username) catch {};
@@ -342,7 +426,24 @@ pub const App = struct {
 
         const c = if (self.client) |*p| p else return error.ServiceNotRunning;
         try c.send(req);
+
+        const mode: Mode = if (std.mem.eql(u8, portal, gateway_addr)) .gateway else .portal;
+        self.rememberConnect(portal, mode, cred.username);
         return true;
+    }
+
+    /// Snapshots the parameters of a successful connect so a later
+    /// `ResumeConnection` can replay it (cached cookie preferred).
+    fn rememberConnect(self: *App, portal: []const u8, mode: Mode, user: []const u8) void {
+        const portal_owned = self.allocator.dupe(u8, portal) catch return;
+        const user_owned = self.allocator.dupe(u8, user) catch {
+            self.allocator.free(portal_owned);
+            return;
+        };
+        self.last_connect_lock.lock();
+        defer self.last_connect_lock.unlock();
+        if (self.last_connect) |old| old.free(self.allocator);
+        self.last_connect = .{ .portal = portal_owned, .mode = mode, .user = user_owned };
     }
 
     /// libsecret lookup if `hint_user` is set, gateway-scoped SAML otherwise.
@@ -451,15 +552,64 @@ pub const App = struct {
 
         if (event == .VpnEnv) self.cacheEnv(event.VpnEnv);
 
+        // gpservice relays SIGUSR2 (from the NetworkManager up-hook) as
+        // `ResumeConnection`; replay the last connect on the GTK thread.
+        if (event == .ResumeConnection) {
+            _ = glib.idleAddOnce(&handleResume, self);
+            return;
+        }
+
         const status: state_mod.Status = switch (event) {
             .VpnState => |vs| state_mod.fromVpnState(vs),
             .VpnEnv => |env| state_mod.fromVpnState(env.vpn_state),
             .ActiveGui, .ResumeConnection => return,
         };
+        self.postStatus(status);
+    }
 
-        const msg = self.allocator.create(StatusUpdate) catch return;
-        msg.* = .{ .app = self, .status = status };
-        _ = glib.idleAddOnce(&applyStatusUpdate, msg);
+    fn handleResume(raw: ?*anyopaque) callconv(.c) void {
+        const self: *App = @ptrCast(@alignCast(raw.?));
+        self.beginReconnect();
+    }
+
+    /// GTK thread. Replays the last successful connect unless one is
+    /// already up or in progress. Prefers the cached cookie; falls back
+    /// to interactive SAML if it's gone.
+    fn beginReconnect(self: *App) void {
+        switch (self.current_status) {
+            .connecting, .connected, .reconnecting => return,
+            .disconnected, .disconnecting, .service_unreachable => {},
+        }
+        if (self.reconnecting.swap(true, .acq_rel)) return;
+
+        self.last_connect_lock.lock();
+        const portal, const mode, const user = blk: {
+            const lc = self.last_connect orelse {
+                self.last_connect_lock.unlock();
+                self.reconnecting.store(false, .release);
+                std.log.info("ResumeConnection ignored: no prior connection to restore", .{});
+                return;
+            };
+            const p = self.allocator.dupe(u8, lc.portal) catch {
+                self.last_connect_lock.unlock();
+                self.reconnecting.store(false, .release);
+                return;
+            };
+            const u = if (lc.user) |cu| self.allocator.dupe(u8, cu) catch {
+                self.allocator.free(p);
+                self.last_connect_lock.unlock();
+                self.reconnecting.store(false, .release);
+                return;
+            } else null;
+            break :blk .{ p, lc.mode, u };
+        };
+        self.last_connect_lock.unlock();
+        defer self.allocator.free(portal);
+
+        std.log.info("ResumeConnection: reconnecting to {s}", .{portal});
+        self.current_status = .reconnecting;
+        if (self.window) |w| w.setStatus(.reconnecting);
+        self.startConnect(portal, mode, user, true);
     }
 
     fn cacheEnv(self: *App, env: protocol.VpnEnv) void {
@@ -485,6 +635,7 @@ pub const App = struct {
     fn applyStatusUpdate(raw: ?*anyopaque) callconv(.c) void {
         const msg: *StatusUpdate = @ptrCast(@alignCast(raw.?));
         defer msg.app.allocator.destroy(msg);
+        msg.app.current_status = msg.status;
         if (msg.app.window) |w| w.setStatus(msg.status);
     }
 };

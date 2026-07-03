@@ -15,6 +15,10 @@ pub const Params = struct {
 };
 
 pub const Error = error{
+    /// Transport never reached the gateway (DNS/connect/timeout). Kept
+    /// distinct from `HttpFailed` so a post-resume network gap doesn't
+    /// look like a rejected cookie.
+    Unreachable,
     HttpFailed,
     EmptyResponse,
     MissingAuthcookie,
@@ -47,7 +51,7 @@ pub fn login(allocator: std.mem.Allocator, params: Params) Error![]u8 {
         .headers = .{ .content_type = .{ .override = "application/x-www-form-urlencoded" } },
         .extra_headers = &.{ua_header},
         .response_writer = &response.writer,
-    }) catch return error.HttpFailed;
+    }) catch return error.Unreachable;
     if (res.status != .ok) return error.HttpFailed;
 
     const xml = std.mem.trim(u8, response.written(), " \t\r\n");

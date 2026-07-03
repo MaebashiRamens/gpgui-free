@@ -8,6 +8,9 @@ pub const Status = enum {
     connecting,
     connected,
     disconnecting,
+    /// Synthetic: not a `VpnState`. Set while we re-run the connect flow
+    /// after a `ResumeConnection` (network came back).
+    reconnecting,
     service_unreachable,
 
     /// Sentinel-terminated for GTK consumption.
@@ -17,6 +20,7 @@ pub const Status = enum {
             .connecting => "Connecting…",
             .connected => "Connected",
             .disconnecting => "Disconnecting…",
+            .reconnecting => "Reconnecting…",
             .service_unreachable => "gpservice unreachable",
         };
     }
