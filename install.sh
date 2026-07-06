@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eEuo pipefail
 
-current_dir=$(cd "$(dirname "$0")/.." && pwd)
+current_dir=$(cd "$(dirname "$0")" && pwd)
 target_bin=/usr/bin/gpgui
 backup_bin=${target_bin}.proprietary.bak
 
