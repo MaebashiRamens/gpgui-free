@@ -52,6 +52,9 @@ pub const App = struct {
     /// True while an auto-reconnect job is in flight — dedupes a burst of
     /// `ResumeConnection` events into a single reconnect.
     reconnecting: std.atomic.Value(bool) = .init(false),
+    /// Bumped per reconnect (GTK thread) so a stale watchdog can tell it
+    /// was superseded and skip resetting a newer attempt.
+    reconnect_gen: u64 = 0,
 
     const LastConnect = struct {
         portal: []u8,
@@ -208,14 +211,14 @@ pub const App = struct {
     fn startConnect(self: *App, portal: []const u8, mode: Mode, cached_user: ?[]u8, reconnect: bool) void {
         const portal_owned = self.allocator.dupe(u8, portal) catch {
             if (cached_user) |u| self.allocator.free(u);
-            if (reconnect) self.reconnecting.store(false, .release);
+            if (reconnect) self.abortReconnect();
             return;
         };
 
         const job = self.allocator.create(ConnectJob) catch {
             self.allocator.free(portal_owned);
             if (cached_user) |u| self.allocator.free(u);
-            if (reconnect) self.reconnecting.store(false, .release);
+            if (reconnect) self.abortReconnect();
             return;
         };
         job.* = .{ .app = self, .portal = portal_owned, .mode = mode, .cached_user = cached_user, .reconnect = reconnect };
@@ -224,11 +227,21 @@ pub const App = struct {
             std.log.err("connect thread spawn failed: {s}", .{@errorName(err)});
             self.allocator.free(portal_owned);
             if (cached_user) |u| self.allocator.free(u);
-            if (reconnect) self.reconnecting.store(false, .release);
+            if (reconnect) self.abortReconnect();
             self.allocator.destroy(job);
             return;
         };
         thread.detach();
+    }
+
+    /// GTK thread. Clears the in-flight guard and drops a stuck
+    /// "Reconnecting…" back to disconnected so the UI can't freeze.
+    fn abortReconnect(self: *App) void {
+        self.reconnecting.store(false, .release);
+        if (self.current_status == .reconnecting) {
+            self.current_status = .disconnected;
+            if (self.window) |w| w.setStatus(.disconnected);
+        }
     }
 
     const ConnectJob = struct {
@@ -262,6 +275,12 @@ pub const App = struct {
     /// Transient reachability gaps after a network-up event usually clear
     /// within the first retry or two.
     const reconnect_max_tries: u8 = 3;
+
+    /// Upper bound on a reconnect (worst case: 3 tries + 2s+4s backoff +
+    /// a blocking SAML fallback). Past this the watchdog unsticks the UI.
+    const reconnect_watchdog_secs: c_uint = 90;
+
+    const ReconnectWatch = struct { app: *App, gen: u64 };
 
     /// Backoff before the (0-based) `attempt`-th retry: 2s, 4s, 8s, …
     fn reconnectDelayNs(attempt: u6) u64 {
@@ -609,7 +628,29 @@ pub const App = struct {
         std.log.info("ResumeConnection: reconnecting to {s}", .{portal});
         self.current_status = .reconnecting;
         if (self.window) |w| w.setStatus(.reconnecting);
+        self.armReconnectWatchdog();
         self.startConnect(portal, mode, user, true);
+    }
+
+    /// A reconnect can stall with no terminal `VpnState` — the job blocks
+    /// on a SAML browser the user never completes, gpservice stays silent
+    /// after `Connect`, or a spawn fails. The watchdog guarantees
+    /// "Reconnecting…" resolves instead of freezing forever.
+    fn armReconnectWatchdog(self: *App) void {
+        self.reconnect_gen +%= 1;
+        const watch = self.allocator.create(ReconnectWatch) catch return;
+        watch.* = .{ .app = self, .gen = self.reconnect_gen };
+        _ = glib.timeoutAddSecondsOnce(reconnect_watchdog_secs, &reconnectWatchdog, watch);
+    }
+
+    fn reconnectWatchdog(raw: ?*anyopaque) callconv(.c) void {
+        const watch: *ReconnectWatch = @ptrCast(@alignCast(raw.?));
+        const self = watch.app;
+        defer self.allocator.destroy(watch);
+        // Superseded by a newer reconnect, or already resolved — leave it be.
+        if (watch.gen != self.reconnect_gen or self.current_status != .reconnecting) return;
+        std.log.warn("reconnect watchdog: still reconnecting after {d}s; resetting", .{reconnect_watchdog_secs});
+        self.abortReconnect();
     }
 
     fn cacheEnv(self: *App, env: protocol.VpnEnv) void {
