@@ -104,6 +104,10 @@ pub const Window = struct {
         gtk.Window.present(self.window.as(gtk.Window));
     }
 
+    pub fn hide(self: *Window) void {
+        gtk.Widget.setVisible(self.window.as(gtk.Widget), 0);
+    }
+
     pub fn toggleVisible(self: *Window) void {
         const w = self.window.as(gtk.Widget);
         if (gtk.Widget.getVisible(w) != 0) {

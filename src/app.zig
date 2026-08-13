@@ -145,6 +145,7 @@ pub const App = struct {
 
         if (self.client) |*c| {
             c.setEventCallback(self, &onWsEvent);
+            c.setCloseCallback(self, &onWsClosed);
             c.start() catch |err| {
                 std.log.warn("gpservice connect failed: {s}", .{@errorName(err)});
                 w.setStatus(.service_unreachable);
@@ -154,9 +155,22 @@ pub const App = struct {
         }
     }
 
-    /// Drop our reference before GTK destroys the window; returning
-    /// PROPAGATE lets the default handler tear it down and quit the app.
+    /// Reader thread; fires when the WS dies without a deliberate stop
+    /// (gpservice crashed or restarted with a new port).
+    fn onWsClosed(ctx: *anyopaque) void {
+        const self: *App = @ptrCast(@alignCast(ctx));
+        std.log.warn("gpservice connection lost", .{});
+        self.postStatus(.service_unreachable);
+    }
+
+    /// With a tray, closing hides the window so the app keeps running
+    /// (tray toggle brings it back). Without one, hiding would strand
+    /// the user, so fall through to the default destroy-and-quit.
     fn onWindowClose(_: *gtk.Window, self: *App) callconv(.c) c_int {
+        if (self.tray != null) {
+            if (self.window) |w| w.hide();
+            return 1;
+        }
         if (self.window) |w| {
             self.window = null;
             w.deinit(false);
