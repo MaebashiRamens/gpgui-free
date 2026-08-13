@@ -209,16 +209,21 @@ pub const App = struct {
     /// `reconnect` jobs retry unreachable gateways with backoff and clear
     /// the in-flight guard when done.
     fn startConnect(self: *App, portal: []const u8, mode: Mode, cached_user: ?[]u8, reconnect: bool) void {
+        if (!reconnect) {
+            self.current_status = .connecting;
+            if (self.window) |w| w.setStatus(.connecting);
+        }
+
         const portal_owned = self.allocator.dupe(u8, portal) catch {
             if (cached_user) |u| self.allocator.free(u);
-            if (reconnect) self.abortReconnect();
+            self.abortConnect();
             return;
         };
 
         const job = self.allocator.create(ConnectJob) catch {
             self.allocator.free(portal_owned);
             if (cached_user) |u| self.allocator.free(u);
-            if (reconnect) self.abortReconnect();
+            self.abortConnect();
             return;
         };
         job.* = .{ .app = self, .portal = portal_owned, .mode = mode, .cached_user = cached_user, .reconnect = reconnect };
@@ -227,18 +232,17 @@ pub const App = struct {
             std.log.err("connect thread spawn failed: {s}", .{@errorName(err)});
             self.allocator.free(portal_owned);
             if (cached_user) |u| self.allocator.free(u);
-            if (reconnect) self.abortReconnect();
+            self.abortConnect();
             self.allocator.destroy(job);
             return;
         };
         thread.detach();
     }
 
-    /// GTK thread. Clears the in-flight guard and drops a stuck
-    /// "Reconnecting…" back to disconnected so the UI can't freeze.
-    fn abortReconnect(self: *App) void {
+    /// GTK thread. Drops a stuck transitional state back to disconnected.
+    fn abortConnect(self: *App) void {
         self.reconnecting.store(false, .release);
-        if (self.current_status == .reconnecting) {
+        if (self.current_status == .connecting or self.current_status == .reconnecting) {
             self.current_status = .disconnected;
             if (self.window) |w| w.setStatus(.disconnected);
         }
@@ -309,9 +313,10 @@ pub const App = struct {
                 },
             }
         }
-        // A reconnect that never connected leaves the UI on "Reconnecting…";
-        // no `VpnState` will arrive to clear it, so reset here.
-        if (job.reconnect) job.app.postStatus(.disconnected);
+        // A connect that never sent `Connect` leaves the UI on
+        // "Connecting…"/"Reconnecting…" with no `VpnState` to follow, so
+        // reset here — both manual and reconnect jobs.
+        job.app.postStatus(.disconnected);
     }
 
     fn postStatus(self: *App, status: state_mod.Status) void {
@@ -650,7 +655,7 @@ pub const App = struct {
         // Superseded by a newer reconnect, or already resolved — leave it be.
         if (watch.gen != self.reconnect_gen or self.current_status != .reconnecting) return;
         std.log.warn("reconnect watchdog: still reconnecting after {d}s; resetting", .{reconnect_watchdog_secs});
-        self.abortReconnect();
+        self.abortConnect();
     }
 
     fn cacheEnv(self: *App, env: protocol.VpnEnv) void {
