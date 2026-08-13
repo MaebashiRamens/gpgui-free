@@ -14,6 +14,8 @@ pub const Error = error{
 } || lockfile.Error || ws.Error || crypto.Error || std.Thread.SpawnError;
 
 pub const EventCallback = *const fn (ctx: *anyopaque, event: protocol.WsEvent) void;
+/// Fires on the reader thread when the connection dies without `stop()`.
+pub const CloseCallback = *const fn (ctx: *anyopaque) void;
 
 pub const Config = struct {
     api_key: []const u8,
@@ -30,9 +32,9 @@ pub const Client = struct {
     state: std.atomic.Value(State) = .init(.idle),
     conn: ?ws.Conn = null,
     reader: ?std.Thread = null,
-    write_mu: std.Thread.Mutex = .{},
 
     cb: ?struct { ctx: *anyopaque, f: EventCallback } = null,
+    on_close: ?struct { ctx: *anyopaque, f: CloseCallback } = null,
 
     const State = enum(u8) { idle, running, stopping };
 
@@ -52,6 +54,10 @@ pub const Client = struct {
         self.cb = .{ .ctx = ctx, .f = cb };
     }
 
+    pub fn setCloseCallback(self: *Client, ctx: *anyopaque, cb: CloseCallback) void {
+        self.on_close = .{ .ctx = ctx, .f = cb };
+    }
+
     pub fn start(self: *Client) Error!void {
         const info = lockfile.read(self.lock_path) catch |err| switch (err) {
             error.LockFileMissing => return error.ServiceNotRunning,
@@ -60,7 +66,7 @@ pub const Client = struct {
 
         self.conn = try ws.Conn.connect(self.allocator, self.host, info.port, "/ws");
         errdefer {
-            self.conn.?.close();
+            self.conn.?.deinit();
             self.conn = null;
             self.state.store(.idle, .release);
         }
@@ -68,13 +74,17 @@ pub const Client = struct {
         self.reader = try std.Thread.spawn(.{}, readerLoop, .{self});
     }
 
+    /// Shutdown wakes a reader blocked in `read`; the arena and stream
+    /// are only destroyed after the join, so the reader never touches
+    /// freed memory.
     pub fn stop(self: *Client) void {
         if (self.state.swap(.stopping, .acq_rel) != .running) return;
-        if (self.conn) |*c| c.close();
+        if (self.conn) |*c| c.shutdown();
         if (self.reader) |t| {
             t.join();
             self.reader = null;
         }
+        if (self.conn) |*c| c.deinit();
         self.conn = null;
         self.state.store(.idle, .release);
     }
@@ -90,12 +100,19 @@ pub const Client = struct {
         const sealed = try crypto.seal(self.allocator, self.key, plaintext);
         defer self.allocator.free(sealed);
 
-        self.write_mu.lock();
-        defer self.write_mu.unlock();
         try conn.writeBinary(sealed);
     }
 
     fn readerLoop(self: *Client) void {
+        self.pump();
+        // A deliberate stop() flips state first; anything else means the
+        // service side died and the app should hear about it.
+        if (self.state.load(.acquire) == .running) {
+            if (self.on_close) |cb| cb.f(cb.ctx);
+        }
+    }
+
+    fn pump(self: *Client) void {
         while (self.state.load(.acquire) == .running) {
             const conn = if (self.conn) |*c| c else return;
             const frame = conn.readFrame() catch |err| {

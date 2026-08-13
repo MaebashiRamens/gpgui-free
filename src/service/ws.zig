@@ -35,6 +35,12 @@ pub const Conn = struct {
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     arena: std.heap.ArenaAllocator,
+    /// Serializes every frame write — sends, auto-PONGs, and close.
+    write_mu: std.Thread.Mutex = .{},
+    /// Frame bytes the server coalesced with the 101 response; drained
+    /// before the socket is read.
+    leftover: []u8 = &.{},
+    leftover_off: usize = 0,
 
     pub fn connect(
         allocator: std.mem.Allocator,
@@ -46,19 +52,29 @@ pub const Conn = struct {
         const stream = try std.net.tcpConnectToAddress(addr);
         errdefer stream.close();
 
-        try handshake(stream, host, port, path);
+        var resp_buf: [4096]u8 = undefined;
+        const trailing = try handshake(stream, host, port, path, &resp_buf);
 
         return .{
             .allocator = allocator,
             .stream = stream,
             .arena = std.heap.ArenaAllocator.init(allocator),
+            .leftover = try allocator.dupe(u8, trailing),
         };
     }
 
-    pub fn close(self: *Conn) void {
+    /// Thread-safe; wakes a reader blocked in `read` so it can be joined.
+    /// Resources stay valid until `deinit`.
+    pub fn shutdown(self: *Conn) void {
         self.writeFrame(.close, &.{}) catch {};
+        std.posix.shutdown(self.stream.handle, .both) catch {};
+    }
+
+    /// Only after the reader thread is joined — frees its read arena.
+    pub fn deinit(self: *Conn) void {
         self.stream.close();
         self.arena.deinit();
+        self.allocator.free(self.leftover);
     }
 
     pub fn writeBinary(self: *Conn, payload: []const u8) Error!void {
@@ -66,6 +82,9 @@ pub const Conn = struct {
     }
 
     fn writeFrame(self: *Conn, opcode: Opcode, payload: []const u8) Error!void {
+        self.write_mu.lock();
+        defer self.write_mu.unlock();
+
         var header: [14]u8 = undefined;
         header[0] = 0x80 | @as(u8, @intFromEnum(opcode));
 
@@ -144,7 +163,7 @@ pub const Conn = struct {
 
     fn readRawFrame(self: *Conn, a: std.mem.Allocator) Error!RawFrame {
         var hdr: [2]u8 = undefined;
-        try readFull(self.stream, &hdr);
+        try self.readFull(&hdr);
 
         const fin = (hdr[0] & 0x80) != 0;
         const opcode: Opcode = @enumFromInt(hdr[0] & 0x0f);
@@ -154,12 +173,12 @@ pub const Conn = struct {
         const payload_len: u64 = switch (hdr[1] & 0x7f) {
             127 => blk: {
                 var ext: [8]u8 = undefined;
-                try readFull(self.stream, &ext);
+                try self.readFull(&ext);
                 break :blk std.mem.readInt(u64, &ext, .big);
             },
             126 => blk: {
                 var ext: [2]u8 = undefined;
-                try readFull(self.stream, &ext);
+                try self.readFull(&ext);
                 break :blk std.mem.readInt(u16, &ext, .big);
             },
             else => |n| n,
@@ -167,26 +186,36 @@ pub const Conn = struct {
         if (payload_len > max_payload) return error.FrameTooLarge;
 
         const payload = try a.alloc(u8, @intCast(payload_len));
-        try readFull(self.stream, payload);
+        try self.readFull(payload);
         return .{ .fin = fin, .opcode = opcode, .payload = payload };
+    }
+
+    fn readFull(self: *Conn, dst: []u8) Error!void {
+        var total: usize = 0;
+        const pending = self.leftover[self.leftover_off..];
+        if (pending.len != 0) {
+            const n = @min(pending.len, dst.len);
+            @memcpy(dst[0..n], pending[0..n]);
+            self.leftover_off += n;
+            total = n;
+        }
+        while (total < dst.len) {
+            const n = try self.stream.read(dst[total..]);
+            if (n == 0) return error.PeerClosed;
+            total += n;
+        }
     }
 };
 
-fn readFull(stream: std.net.Stream, dst: []u8) Error!void {
-    var total: usize = 0;
-    while (total < dst.len) {
-        const n = try stream.read(dst[total..]);
-        if (n == 0) return error.PeerClosed;
-        total += n;
-    }
-}
-
+/// Returns the bytes read past the response header — the server may
+/// coalesce its first frame with the 101 and they must not be dropped.
 fn handshake(
     stream: std.net.Stream,
     host: []const u8,
     port: u16,
     path: []const u8,
-) Error!void {
+    resp: *[4096]u8,
+) Error![]const u8 {
     var key_bytes: [16]u8 = undefined;
     std.crypto.random.bytes(&key_bytes);
     var key_b64: [24]u8 = undefined;
@@ -206,19 +235,21 @@ fn handshake(
     ) catch return error.HandshakeFailed;
     try stream.writeAll(req);
 
-    var resp: [4096]u8 = undefined;
     var len: usize = 0;
-    while (len < resp.len) {
+    const header_end = while (len < resp.len) {
         const n = try stream.read(resp[len..]);
         if (n == 0) return error.HandshakeFailed;
         len += n;
-        if (std.mem.indexOf(u8, resp[0..len], "\r\n\r\n") != null) break;
-    }
+        if (std.mem.indexOf(u8, resp[0..len], "\r\n\r\n")) |i| break i + 4;
+    } else return error.HandshakeFailed;
 
-    if (!std.mem.startsWith(u8, resp[0..len], "HTTP/1.1 101")) return error.HandshakeFailed;
+    const header = resp[0..header_end];
+    if (!std.mem.startsWith(u8, header, "HTTP/1.1 101")) return error.HandshakeFailed;
 
     const want_accept = expectedAccept(&key_b64);
-    if (std.mem.indexOf(u8, resp[0..len], &want_accept) == null) return error.HandshakeFailed;
+    if (std.mem.indexOf(u8, header, &want_accept) == null) return error.HandshakeFailed;
+
+    return resp[header_end..len];
 }
 
 // `base64(sha1(client_key ++ ws_guid))` per RFC 6455 §4.2.2.
