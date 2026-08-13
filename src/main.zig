@@ -5,7 +5,13 @@ const cli = @import("cli.zig");
 const App = @import("app.zig").App;
 const log_filter = @import("log_filter.zig");
 
+// `std.process.exit` skips defers, so all cleanup-carrying scopes live
+// in `run` and exit happens only after it returns.
 pub fn main() !void {
+    std.process.exit(try run());
+}
+
+fn run() !u8 {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -17,7 +23,7 @@ pub fn main() !void {
         error.UnknownArgument => {
             try std.fs.File.stderr().writeAll("gpgui-free: unknown argument\n");
             try std.fs.File.stderr().writeAll(cli.help_text);
-            std.process.exit(2);
+            return 2;
         },
     };
 
@@ -26,12 +32,20 @@ pub fn main() !void {
         const version = try cli.versionString(&buf);
         try std.fs.File.stdout().writeAll(version);
         try std.fs.File.stdout().writeAll("\n");
-        return;
+        return 0;
     }
     if (args.show_help) {
         try std.fs.File.stdout().writeAll(cli.help_text);
-        return;
+        return 0;
     }
+
+    // A write to the WS socket after gpservice dies must surface as
+    // EPIPE, not kill the process.
+    std.posix.sigaction(std.posix.SIG.PIPE, &.{
+        .handler = .{ .handler = std.posix.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    }, null);
 
     log_filter.install();
 
@@ -45,7 +59,7 @@ pub fn main() !void {
         app.attachApiKey(&key);
     }
 
-    std.process.exit(@intCast(app.run()));
+    return @intCast(app.run());
 }
 
 fn readApiKey(out: *[32]u8) !void {
