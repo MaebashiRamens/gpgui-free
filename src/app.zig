@@ -352,13 +352,32 @@ pub const App = struct {
         // A connect that never sent `Connect` leaves the UI on
         // "Connecting…"/"Reconnecting…" with no `VpnState` to follow, so
         // reset here — both manual and reconnect jobs.
-        job.app.postStatus(.disconnected);
+        job.app.postConnectFailed(if (job.reconnect) .reconnecting else .connecting);
     }
 
     fn postStatus(self: *App, status: state_mod.Status) void {
         const msg = self.allocator.create(StatusUpdate) catch return;
         msg.* = .{ .app = self, .status = status };
         _ = glib.idleAddOnce(&applyStatusUpdate, msg);
+    }
+
+    const FailedConnect = struct { app: *App, expected: state_mod.Status };
+
+    /// Unwinds only the transitional state this job set — a state the
+    /// service confirmed meanwhile (e.g. Connected via another client)
+    /// must not be clobbered by a stale failure.
+    fn postConnectFailed(self: *App, expected: state_mod.Status) void {
+        const msg = self.allocator.create(FailedConnect) catch return;
+        msg.* = .{ .app = self, .expected = expected };
+        _ = glib.idleAddOnce(&applyConnectFailed, msg);
+    }
+
+    fn applyConnectFailed(raw: ?*anyopaque) callconv(.c) void {
+        const msg: *FailedConnect = @ptrCast(@alignCast(raw.?));
+        defer msg.app.allocator.destroy(msg);
+        if (msg.app.current_status != msg.expected) return;
+        msg.app.current_status = .disconnected;
+        if (msg.app.window) |w| w.setStatus(.disconnected);
     }
 
     test reconnectDelayNs {
