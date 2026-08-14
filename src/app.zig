@@ -182,25 +182,22 @@ pub const App = struct {
         const self: *App = @ptrCast(@alignCast(ctx));
         const portal_slice = std.mem.span(portal);
 
+        // Read-modify-write so knobs the UI doesn't own (mtu,
+        // allow_extend_session, …) survive the save.
+        const parsed: ?std.json.Parsed(config.Config) = config.load(self.allocator) catch null;
+        defer if (parsed) |p| p.deinit();
+        var cfg: config.Config = if (parsed) |p| p.value else .{};
+
         // Drop last_user when the portal hostname changes — cached
         // cookie is keyed by gateway and won't fit a new one.
-        var preserved_user: ?[]u8 = null;
-        if (config.load(self.allocator)) |p| {
-            defer p.deinit();
-            if (p.value.last_user) |u| {
-                if (p.value.last_portal) |old| {
-                    if (std.mem.eql(u8, old, portal_slice)) {
-                        preserved_user = self.allocator.dupe(u8, u) catch null;
-                    }
-                }
-            }
-        } else |_| {}
+        if (cfg.last_portal == null or !std.mem.eql(u8, cfg.last_portal.?, portal_slice))
+            cfg.last_user = null;
+        const preserved_user: ?[]u8 =
+            if (cfg.last_user) |u| self.allocator.dupe(u8, u) catch null else null;
 
-        config.save(self.allocator, .{
-            .last_portal = portal_slice,
-            .last_mode = mode,
-            .last_user = preserved_user,
-        }) catch |err|
+        cfg.last_portal = portal_slice;
+        cfg.last_mode = mode;
+        config.save(self.allocator, cfg) catch |err|
             std.log.warn("config save failed: {s}", .{@errorName(err)});
 
         self.startConnect(portal_slice, mode, preserved_user, false);
@@ -425,19 +422,14 @@ pub const App = struct {
             }) catch |err|
                 std.log.warn("cookie cache save failed: {s}", .{@errorName(err)});
         }
-        // Preserve user-set value across the save below.
-        var allow_extend_session = false;
-        if (config.load(self.allocator)) |parsed| {
-            defer parsed.deinit();
-            allow_extend_session = parsed.value.allow_extend_session;
-        } else |_| {}
+        const parsed: ?std.json.Parsed(config.Config) = config.load(self.allocator) catch null;
+        defer if (parsed) |p| p.deinit();
+        var cfg: config.Config = if (parsed) |p| p.value else .{};
 
-        config.save(self.allocator, .{
-            .last_portal = portal,
-            .last_mode = if (std.mem.eql(u8, portal, gateway_addr)) .gateway else .portal,
-            .last_user = cred.username,
-            .allow_extend_session = allow_extend_session,
-        }) catch |err|
+        cfg.last_portal = portal;
+        cfg.last_mode = if (std.mem.eql(u8, portal, gateway_addr)) .gateway else .portal;
+        cfg.last_user = cred.username;
+        config.save(self.allocator, cfg) catch |err|
             std.log.warn("config save failed: {s}", .{@errorName(err)});
 
         const env = self.snapshotVpnEnv();
@@ -457,7 +449,10 @@ pub const App = struct {
                     // gpservice drops csd_wrapper when `hip` is false.
                     .hip = true,
                     .csd_wrapper = env.csd_wrapper orelse hip_wrapper_default,
-                    .allow_extend_session = allow_extend_session,
+                    .allow_extend_session = cfg.allow_extend_session,
+                    .mtu = cfg.mtu,
+                    .disable_ipv6 = cfg.disable_ipv6,
+                    .no_dtls = cfg.no_dtls,
                 },
             },
         };

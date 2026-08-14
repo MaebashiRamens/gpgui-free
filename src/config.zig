@@ -18,6 +18,11 @@ pub const Config = struct {
     /// Asks gpservice to extend the session instead of dropping the
     /// tunnel at `user_expires`. Wire name: `allowExtendSession`.
     allow_extend_session: bool = false,
+    /// Tunnel MTU; 0 lets openconnect derive it from the interface.
+    mtu: u32 = 0,
+    disable_ipv6: bool = false,
+    /// Forces TLS transport; slower but survives UDP-hostile networks.
+    no_dtls: bool = false,
 };
 
 /// Caller calls `parsed.deinit()`.
@@ -79,4 +84,35 @@ test "emptyParsed yields default Config" {
     var parsed = try emptyParsed(std.testing.allocator);
     defer parsed.deinit();
     try std.testing.expect(parsed.value.last_portal == null);
+}
+
+test "parse tolerates configs written before the tunnel knobs" {
+    const parsed = try std.json.parseFromSlice(Config, std.testing.allocator,
+        \\{"last_portal":"vpn.example.com","last_mode":"gateway","last_user":"alice"}
+    , .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u32, 0), parsed.value.mtu);
+    try std.testing.expect(!parsed.value.disable_ipv6);
+    try std.testing.expect(!parsed.value.no_dtls);
+    try std.testing.expect(!parsed.value.allow_extend_session);
+}
+
+test "tunnel knobs survive a stringify/parse round-trip" {
+    var aw: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try std.json.Stringify.value(Config{
+        .last_portal = "vpn.example.com",
+        .mtu = 1300,
+        .disable_ipv6 = true,
+        .no_dtls = true,
+    }, .{}, &aw.writer);
+
+    const parsed = try std.json.parseFromSlice(Config, std.testing.allocator, aw.written(), .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(u32, 1300), parsed.value.mtu);
+    try std.testing.expect(parsed.value.disable_ipv6);
+    try std.testing.expect(parsed.value.no_dtls);
+    try std.testing.expectEqualStrings("vpn.example.com", parsed.value.last_portal.?);
 }
