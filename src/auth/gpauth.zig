@@ -76,7 +76,13 @@ pub fn parseResult(
     };
 
     // 2.5.x uses camelCase tags; older releases used PascalCase.
-    if (obj.get("failure") orelse obj.get("Failure")) |_| return error.AuthFailed;
+    if (obj.get("failure") orelse obj.get("Failure")) |reason| {
+        switch (reason) {
+            .string => |s| std.log.warn("gpauth failure: {s}", .{s}),
+            else => {},
+        }
+        return error.AuthFailed;
+    }
     const success = obj.get("success") orelse obj.get("Success") orelse return error.MalformedOutput;
     const fields = switch (success) {
         .object => |o| o,
