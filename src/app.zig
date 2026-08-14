@@ -338,7 +338,6 @@ pub const App = struct {
 
     const ReconnectWatch = struct { app: *App, gen: u64 };
 
-    /// Backoff before the (0-based) `attempt`-th retry: 2s, 4s, 8s, …
     fn reconnectDelayNs(attempt: u6) u64 {
         return (@as(u64, 2) << attempt) * std.time.ns_per_s;
     }
@@ -694,8 +693,7 @@ pub const App = struct {
     }
 
     /// GTK thread. Replays the last successful connect unless one is
-    /// already up or in progress. Prefers the cached cookie; falls back
-    /// to interactive SAML if it's gone.
+    /// already up or in progress.
     fn beginReconnect(self: *App) void {
         switch (self.current_status) {
             .connecting, .connected, .reconnecting => return,
@@ -742,10 +740,8 @@ pub const App = struct {
         self.startConnect(portal, mode, user, true, gateway);
     }
 
-    /// A reconnect can stall with no terminal `VpnState` — the job blocks
-    /// on a SAML browser the user never completes, gpservice stays silent
-    /// after `Connect`, or a spawn fails. The watchdog guarantees
-    /// "Reconnecting…" resolves instead of freezing forever.
+    /// A stalled reconnect emits no terminal `VpnState`; the watchdog
+    /// keeps "Reconnecting…" from freezing forever.
     fn armReconnectWatchdog(self: *App) void {
         self.reconnect_gen +%= 1;
         const watch = self.allocator.create(ReconnectWatch) catch return;
