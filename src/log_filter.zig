@@ -39,6 +39,11 @@ fn findMessage(fields: []const glib.LogField) ?[]const u8 {
         const key = std.mem.span(f.f_key orelse continue);
         if (!std.mem.eql(u8, key, "MESSAGE")) continue;
         const raw = f.f_value orelse return null;
+        // f_length >= 0 means arbitrary bytes, not NUL-terminated.
+        if (f.f_length >= 0) {
+            const bytes: [*]const u8 = @ptrCast(raw);
+            return bytes[0..@intCast(f.f_length)];
+        }
         return std.mem.span(@as([*:0]const u8, @ptrCast(raw)));
     }
     return null;
