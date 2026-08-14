@@ -268,3 +268,103 @@ test "expectedAccept matches the RFC 6455 §1.3 sample" {
     const got = expectedAccept("dGhlIHNhbXBsZSBub25jZQ==");
     try std.testing.expectEqualStrings("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", &got);
 }
+
+// std.posix has no socketpair wrapper in 0.15; linux-only is fine here.
+fn testSocketPair() ![2]std.posix.socket_t {
+    var fds: [2]i32 = undefined;
+    const rc = std.os.linux.socketpair(std.os.linux.AF.UNIX, std.os.linux.SOCK.STREAM, 0, &fds);
+    if (std.os.linux.E.init(rc) != .SUCCESS) return error.SocketPairFailed;
+    return .{ fds[0], fds[1] };
+}
+
+fn testConn(fd: std.posix.socket_t, leftover: []const u8) !Conn {
+    return .{
+        .allocator = std.testing.allocator,
+        .stream = .{ .handle = fd },
+        .arena = std.heap.ArenaAllocator.init(std.testing.allocator),
+        .leftover = try std.testing.allocator.dupe(u8, leftover),
+    };
+}
+
+test "readFrame drains leftover bytes before the socket" {
+    const fds = try testSocketPair();
+    defer std.posix.close(fds[1]);
+    var conn = try testConn(fds[0], &.{ 0x82, 0x03, 'a', 'b', 'c' });
+    defer conn.deinit();
+
+    const frame = try conn.readFrame();
+    try std.testing.expectEqual(Opcode.binary, frame.opcode);
+    try std.testing.expectEqualStrings("abc", frame.payload);
+}
+
+test "readFrame stitches a frame split across leftover and socket" {
+    const fds = try testSocketPair();
+    defer std.posix.close(fds[1]);
+    var conn = try testConn(fds[0], &.{ 0x82, 0x03, 'a' });
+    defer conn.deinit();
+
+    _ = try std.posix.write(fds[1], "bc");
+    const frame = try conn.readFrame();
+    try std.testing.expectEqualStrings("abc", frame.payload);
+}
+
+test "leftover PING is answered before reading further frames" {
+    const fds = try testSocketPair();
+    defer std.posix.close(fds[1]);
+    // gpservice's exact greeting: PING "Hi" — followed by a binary frame.
+    var conn = try testConn(fds[0], &.{ 0x89, 0x02, 'H', 'i', 0x82, 0x01, 'x' });
+    defer conn.deinit();
+
+    const frame = try conn.readFrame();
+    try std.testing.expectEqualStrings("x", frame.payload);
+
+    var pong: [8]u8 = undefined;
+    const n = try std.posix.read(fds[1], &pong);
+    try std.testing.expectEqual(@as(usize, 8), n);
+    try std.testing.expectEqual(@as(u8, 0x8a), pong[0]);
+    const mask = pong[2..6];
+    try std.testing.expectEqual(@as(u8, 'H'), pong[6] ^ mask[0]);
+    try std.testing.expectEqual(@as(u8, 'i'), pong[7] ^ mask[1]);
+}
+
+fn fakeUpgradeServer(fd: std.posix.socket_t) void {
+    var buf: [1024]u8 = undefined;
+    var len: usize = 0;
+    while (std.mem.indexOf(u8, buf[0..len], "\r\n\r\n") == null) {
+        const n = std.posix.read(fd, buf[len..]) catch return;
+        if (n == 0) return;
+        len += n;
+    }
+    const key_hdr = "Sec-WebSocket-Key: ";
+    const start = (std.mem.indexOf(u8, buf[0..len], key_hdr) orelse return) + key_hdr.len;
+    const end = std.mem.indexOfPos(u8, buf[0..len], start, "\r\n") orelse return;
+    const accept = expectedAccept(buf[start..end]);
+
+    var out: [512]u8 = undefined;
+    // 101 and the first frame (PING "Hi") in ONE write, like gpservice.
+    const resp = std.fmt.bufPrint(
+        &out,
+        "HTTP/1.1 101 Switching Protocols\r\n" ++
+            "Upgrade: websocket\r\n" ++
+            "Connection: Upgrade\r\n" ++
+            "Sec-WebSocket-Accept: {s}\r\n" ++
+            "\r\n" ++
+            "\x89\x02Hi",
+        .{&accept},
+    ) catch return;
+    _ = std.posix.write(fd, resp) catch return;
+}
+
+test "handshake keeps bytes coalesced after the 101 response" {
+    const fds = try testSocketPair();
+    defer std.posix.close(fds[1]);
+    const stream: std.net.Stream = .{ .handle = fds[0] };
+    defer stream.close();
+
+    const server = try std.Thread.spawn(.{}, fakeUpgradeServer, .{fds[1]});
+    defer server.join();
+
+    var resp_buf: [4096]u8 = undefined;
+    const trailing = try handshake(stream, "127.0.0.1", 1, "/ws", &resp_buf);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x89, 0x02, 'H', 'i' }, trailing);
+}
