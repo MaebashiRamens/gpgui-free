@@ -60,10 +60,14 @@ pub const App = struct {
         portal: []u8,
         mode: Mode,
         user: ?[]u8,
+        /// Resolved address — reconnects go straight here so portal-mode
+        /// gateway discovery (interactive SAML) never runs unattended.
+        gateway: []u8,
 
         fn free(self: LastConnect, allocator: std.mem.Allocator) void {
             allocator.free(self.portal);
             if (self.user) |u| allocator.free(u);
+            allocator.free(self.gateway);
         }
     };
 
@@ -200,7 +204,7 @@ pub const App = struct {
         config.save(self.allocator, cfg) catch |err|
             std.log.warn("config save failed: {s}", .{@errorName(err)});
 
-        self.startConnect(portal_slice, mode, preserved_user, false);
+        self.startConnect(portal_slice, mode, preserved_user, false, null);
     }
 
     fn onDisconnectClicked(ctx: *anyopaque) void {
@@ -219,7 +223,7 @@ pub const App = struct {
     /// Spawns the SAML/login worker so the UI thread stays responsive.
     /// `reconnect` jobs retry unreachable gateways with backoff and clear
     /// the in-flight guard when done.
-    fn startConnect(self: *App, portal: []const u8, mode: Mode, cached_user: ?[]u8, reconnect: bool) void {
+    fn startConnect(self: *App, portal: []const u8, mode: Mode, cached_user: ?[]u8, reconnect: bool, known_gateway: ?[]const u8) void {
         if (!reconnect) {
             self.current_status = .connecting;
             if (self.window) |w| w.setStatus(.connecting);
@@ -231,13 +235,31 @@ pub const App = struct {
             return;
         };
 
+        const gateway_owned: ?[]u8 = if (known_gateway) |g|
+            self.allocator.dupe(u8, g) catch {
+                self.allocator.free(portal_owned);
+                if (cached_user) |u| self.allocator.free(u);
+                self.abortConnect();
+                return;
+            }
+        else
+            null;
+
         const job = self.allocator.create(ConnectJob) catch {
             self.allocator.free(portal_owned);
+            if (gateway_owned) |g| self.allocator.free(g);
             if (cached_user) |u| self.allocator.free(u);
             self.abortConnect();
             return;
         };
-        job.* = .{ .app = self, .portal = portal_owned, .mode = mode, .cached_user = cached_user, .reconnect = reconnect };
+        job.* = .{
+            .app = self,
+            .portal = portal_owned,
+            .mode = mode,
+            .cached_user = cached_user,
+            .reconnect = reconnect,
+            .known_gateway = gateway_owned,
+        };
 
         const thread = std.Thread.spawn(.{}, runConnectJob, .{job}) catch |err| {
             std.log.err("connect thread spawn failed: {s}", .{@errorName(err)});
@@ -265,10 +287,13 @@ pub const App = struct {
         mode: Mode,
         cached_user: ?[]u8,
         reconnect: bool,
+        /// Skips gateway discovery when set (reconnect path).
+        known_gateway: ?[]u8 = null,
 
         fn deinit(self: *ConnectJob) void {
             self.app.allocator.free(self.portal);
             if (self.cached_user) |u| self.app.allocator.free(u);
+            if (self.known_gateway) |g| self.app.allocator.free(g);
             self.app.allocator.destroy(self);
         }
     };
@@ -348,10 +373,13 @@ pub const App = struct {
         const auth_binary = job.app.snapshotAuthBinary() catch gpauth.default_binary;
         defer if (!std.mem.eql(u8, auth_binary, gpauth.default_binary)) job.app.allocator.free(auth_binary);
 
-        const gateway_addr = job.app.resolveGateway(auth_binary, job.portal, job.mode) catch |err| {
-            std.log.warn("gateway resolution failed for {s}: {s}", .{ job.portal, @errorName(err) });
-            return .fatal;
-        };
+        const gateway_addr = if (job.known_gateway) |g|
+            job.app.allocator.dupe(u8, g) catch return .fatal
+        else
+            job.app.resolveGateway(auth_binary, job.portal, job.mode) catch |err| {
+                std.log.warn("gateway resolution failed for {s}: {s}", .{ job.portal, @errorName(err) });
+                return .fatal;
+            };
         defer job.app.allocator.free(gateway_addr);
 
         // First attempt may use a cached cookie; on gateway rejection
@@ -461,22 +489,32 @@ pub const App = struct {
         try c.send(req);
 
         const mode: Mode = if (std.mem.eql(u8, portal, gateway_addr)) .gateway else .portal;
-        self.rememberConnect(portal, mode, cred.username);
+        self.rememberConnect(portal, mode, cred.username, gateway_addr);
         return true;
     }
 
     /// Snapshots the parameters of a successful connect so a later
     /// `ResumeConnection` can replay it (cached cookie preferred).
-    fn rememberConnect(self: *App, portal: []const u8, mode: Mode, user: []const u8) void {
+    fn rememberConnect(self: *App, portal: []const u8, mode: Mode, user: []const u8, gateway: []const u8) void {
         const portal_owned = self.allocator.dupe(u8, portal) catch return;
         const user_owned = self.allocator.dupe(u8, user) catch {
             self.allocator.free(portal_owned);
             return;
         };
+        const gateway_owned = self.allocator.dupe(u8, gateway) catch {
+            self.allocator.free(portal_owned);
+            self.allocator.free(user_owned);
+            return;
+        };
         self.last_connect_lock.lock();
         defer self.last_connect_lock.unlock();
         if (self.last_connect) |old| old.free(self.allocator);
-        self.last_connect = .{ .portal = portal_owned, .mode = mode, .user = user_owned };
+        self.last_connect = .{
+            .portal = portal_owned,
+            .mode = mode,
+            .user = user_owned,
+            .gateway = gateway_owned,
+        };
     }
 
     /// libsecret lookup if `hint_user` is set, gateway-scoped SAML otherwise.
@@ -628,7 +666,7 @@ pub const App = struct {
         if (self.reconnecting.swap(true, .acq_rel)) return;
 
         self.last_connect_lock.lock();
-        const portal, const mode, const user = blk: {
+        const portal, const mode, const user, const gateway = blk: {
             const lc = self.last_connect orelse {
                 self.last_connect_lock.unlock();
                 self.reconnecting.store(false, .release);
@@ -640,22 +678,30 @@ pub const App = struct {
                 self.reconnecting.store(false, .release);
                 return;
             };
-            const u = if (lc.user) |cu| self.allocator.dupe(u8, cu) catch {
+            const g = self.allocator.dupe(u8, lc.gateway) catch {
                 self.allocator.free(p);
                 self.last_connect_lock.unlock();
                 self.reconnecting.store(false, .release);
                 return;
+            };
+            const u = if (lc.user) |cu| self.allocator.dupe(u8, cu) catch {
+                self.allocator.free(p);
+                self.allocator.free(g);
+                self.last_connect_lock.unlock();
+                self.reconnecting.store(false, .release);
+                return;
             } else null;
-            break :blk .{ p, lc.mode, u };
+            break :blk .{ p, lc.mode, u, g };
         };
         self.last_connect_lock.unlock();
         defer self.allocator.free(portal);
+        defer self.allocator.free(gateway);
 
-        std.log.info("ResumeConnection: reconnecting to {s}", .{portal});
+        std.log.info("ResumeConnection: reconnecting to {s} via {s}", .{ portal, gateway });
         self.current_status = .reconnecting;
         if (self.window) |w| w.setStatus(.reconnecting);
         self.armReconnectWatchdog();
-        self.startConnect(portal, mode, user, true);
+        self.startConnect(portal, mode, user, true, gateway);
     }
 
     /// A reconnect can stall with no terminal `VpnState` — the job blocks
