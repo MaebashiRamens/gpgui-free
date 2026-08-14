@@ -58,9 +58,15 @@ pub fn save(allocator: std.mem.Allocator, cfg: Config) !void {
     defer aw.deinit();
     try std.json.Stringify.value(cfg, .{}, &aw.writer);
 
-    const file = try std.fs.createFileAbsolute(path, .{ .truncate = true, .mode = 0o600 });
-    defer file.close();
-    try file.writeAll(aw.written());
+    // Write-then-rename so a crash mid-write can't corrupt the config.
+    var tmp_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const tmp = try std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{path});
+    {
+        const file = try std.fs.createFileAbsolute(tmp, .{ .truncate = true, .mode = 0o600 });
+        defer file.close();
+        try file.writeAll(aw.written());
+    }
+    try std.fs.renameAbsolute(tmp, path);
 }
 
 fn filePath(buf: []u8, allocator: std.mem.Allocator) ![]const u8 {
