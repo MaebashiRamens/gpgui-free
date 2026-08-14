@@ -65,7 +65,15 @@ fn run() !u8 {
 fn readApiKey(out: *[32]u8) !void {
     var encoded: [256]u8 = undefined;
     defer std.crypto.secureZero(u8, &encoded);
-    const n = try std.fs.File.stdin().read(&encoded);
+
+    // The pipe may deliver the line in short reads.
+    var n: usize = 0;
+    while (n < encoded.len) {
+        const r = try std.fs.File.stdin().read(encoded[n..]);
+        if (r == 0) break;
+        n += r;
+        if (std.mem.indexOfScalar(u8, encoded[0..n], '\n') != null) break;
+    }
 
     const trimmed = std.mem.trim(u8, encoded[0..n], " \t\r\n");
     const decoded_len = try std.base64.standard.Decoder.calcSizeForSlice(trimmed);
