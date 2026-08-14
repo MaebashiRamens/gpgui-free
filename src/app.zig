@@ -22,9 +22,21 @@ const Mode = config.Mode;
 
 pub const app_id: [*:0]const u8 = "org.gpguifree.GpguiFree";
 
-/// Ships with `gpclient`; used as the fallback HIP wrapper when
-/// gpservice doesn't pass one via `VpnEnv.csd_wrapper`.
-pub const hip_wrapper_default: []const u8 = "/usr/bin/hipreport.sh";
+/// Ships with `gpclient`; fallback when gpservice doesn't pass one via
+/// `VpnEnv.csd_wrapper`. Install location varies by distro packaging.
+const hip_wrapper_fallbacks = [_][]const u8{
+    "/usr/libexec/gpclient/hipreport.sh",
+    "/usr/lib/gpclient/hipreport.sh",
+    "/usr/bin/hipreport.sh",
+};
+
+fn defaultHipWrapper() ?[]const u8 {
+    for (hip_wrapper_fallbacks) |p| {
+        std.fs.accessAbsolute(p, .{}) catch continue;
+        return p;
+    }
+    return null;
+}
 
 pub const App = struct {
     allocator: std.mem.Allocator,
@@ -495,7 +507,7 @@ pub const App = struct {
                     .vpnc_script = env.vpnc_script,
                     // gpservice drops csd_wrapper when `hip` is false.
                     .hip = true,
-                    .csd_wrapper = env.csd_wrapper orelse hip_wrapper_default,
+                    .csd_wrapper = env.csd_wrapper orelse defaultHipWrapper(),
                     .allow_extend_session = cfg.allow_extend_session,
                     .mtu = cfg.mtu,
                     .disable_ipv6 = cfg.disable_ipv6,
