@@ -105,15 +105,27 @@ pub const ConnectInfo = struct {
     gateways: []const Gateway,
 };
 
+/// Parse-only; fields are named as on the wire (upstream
+/// `rename_all = "camelCase"`), unlike the snake_case types we send.
 pub const ConnectedInfo = struct {
     info: ConnectInfo,
-    session_info: ?SessionInfo = null,
+    sessionInfo: ?SessionInfo = null,
+};
+
+/// `SessionWarning` has no serde rename upstream — snake_case.
+pub const SessionWarning = struct {
+    prior_secs: u32,
+    message: []const u8,
 };
 
 pub const SessionInfo = struct {
-    user_name: ?[]const u8 = null,
-    portal: ?[]const u8 = null,
-    gateway: ?[]const u8 = null,
+    lifetimeSecs: ?u32 = null,
+    userExpires: ?u32 = null,
+    expiresInHuman: ?[]const u8 = null,
+    lifetimeWarning: ?SessionWarning = null,
+    inactivityWarning: ?SessionWarning = null,
+    adminLogoutMessage: ?[]const u8 = null,
+    allowExtendSession: bool = false,
 };
 
 pub const ConnectRequest = struct {
@@ -171,9 +183,15 @@ pub const DisconnectRequest = struct {
     }
 };
 
+/// Upstream is a newtype — wire form is the bare string
+/// (`{"UpdateLogLevel":"info"}`), not an object.
 pub const UpdateLogLevelRequest = struct {
     /// "trace" | "debug" | "info" | "warn" | "error"
     level: []const u8,
+
+    pub fn jsonStringify(self: UpdateLogLevelRequest, w: anytype) !void {
+        try w.write(self.level);
+    }
 };
 
 pub const ParseError = error{UnknownVariant} ||

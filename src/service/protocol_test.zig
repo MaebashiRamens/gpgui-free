@@ -23,6 +23,50 @@ test "parse Connecting carries ConnectInfo" {
     try std.testing.expectEqualStrings("gw1", parsed.value.VpnState.Connecting.gateway.name);
 }
 
+test "parse Connected carries camelCase sessionInfo" {
+    const json =
+        \\{"VpnState":{"Connected":{
+        \\  "info":{
+        \\    "portal":"vpn.example.com",
+        \\    "gateway":{"name":"gw1","address":"203.0.113.10"},
+        \\    "gateways":[]
+        \\  },
+        \\  "sessionInfo":{
+        \\    "lifetimeSecs":43200,
+        \\    "userExpires":1786558371,
+        \\    "expiresInHuman":"in 11h 59m",
+        \\    "lifetimeWarning":{"prior_secs":600,"message":"soon"},
+        \\    "allowExtendSession":true
+        \\  }
+        \\}}}
+    ;
+    var parsed = try std.json.parseFromSlice(protocol.WsEvent, std.testing.allocator, json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    const si = parsed.value.VpnState.Connected.sessionInfo.?;
+    try std.testing.expectEqual(@as(?u32, 43200), si.lifetimeSecs);
+    try std.testing.expectEqual(@as(u32, 600), si.lifetimeWarning.?.prior_secs);
+    try std.testing.expect(si.allowExtendSession);
+}
+
+test "parse Connected tolerates absent sessionInfo" {
+    const json =
+        \\{"VpnState":{"Connected":{
+        \\  "info":{
+        \\    "portal":"vpn.example.com",
+        \\    "gateway":{"name":"gw1","address":"203.0.113.10"},
+        \\    "gateways":[]
+        \\  }
+        \\}}}
+    ;
+    var parsed = try std.json.parseFromSlice(protocol.WsEvent, std.testing.allocator, json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.VpnState.Connected.sessionInfo == null);
+}
+
 test "parseWsEvent handles bare-string unit variants" {
     var parsed = try protocol.parseWsEvent(std.testing.allocator, "\"ActiveGui\"");
     defer parsed.deinit();
@@ -71,4 +115,10 @@ test "DisconnectRequest serializes to null" {
     var aw = try stringify(protocol.DisconnectRequest{});
     defer aw.deinit();
     try std.testing.expectEqualStrings("null", aw.written());
+}
+
+test "UpdateLogLevel serializes as a bare string (upstream newtype)" {
+    var aw = try stringify(protocol.WsRequest{ .UpdateLogLevel = .{ .level = "info" } });
+    defer aw.deinit();
+    try std.testing.expectEqualStrings("{\"UpdateLogLevel\":\"info\"}", aw.written());
 }
