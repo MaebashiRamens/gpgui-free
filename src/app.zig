@@ -322,6 +322,10 @@ pub const App = struct {
         }
     };
 
+    /// Optimistic: a stale entry costs one rejected login; a short hint
+    /// would force daily SAML.
+    const cookie_ttl_hint_secs: i64 = 14 * 24 * 60 * 60;
+
     const Outcome = enum { connected, retry, fatal };
 
     /// Transient reachability gaps after a network-up event usually clear
@@ -472,7 +476,7 @@ pub const App = struct {
 
         // Gateway accepted the cookie; persist so the next Connect can skip SAML.
         if (!cred.from_cache) {
-            const expires_at = std.time.timestamp() + 14 * 24 * 60 * 60;
+            const expires_at = std.time.timestamp() + cookie_ttl_hint_secs;
             self.secret_store.store().save(.{
                 .portal = gateway_addr,
                 .user = cred.username,
