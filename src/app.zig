@@ -592,12 +592,24 @@ pub const App = struct {
             return;
         }
 
+        // A second `gpclient launch-gui` POSTs /active-gui instead of
+        // spawning; raise the (possibly hidden) window in its place.
+        if (event == .ActiveGui) {
+            _ = glib.idleAddOnce(&handleActiveGui, self);
+            return;
+        }
+
         const status: state_mod.Status = switch (event) {
             .VpnState => |vs| state_mod.fromVpnState(vs),
             .VpnEnv => |env| state_mod.fromVpnState(env.vpn_state),
             .ActiveGui, .ResumeConnection => return,
         };
         self.postStatus(status);
+    }
+
+    fn handleActiveGui(raw: ?*anyopaque) callconv(.c) void {
+        const self: *App = @ptrCast(@alignCast(raw.?));
+        if (self.window) |w| w.present();
     }
 
     fn handleResume(raw: ?*anyopaque) callconv(.c) void {
