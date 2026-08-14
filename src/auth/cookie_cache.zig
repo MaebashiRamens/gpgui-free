@@ -8,6 +8,14 @@ pub const Entry = struct {
     cookie: []const u8,
     /// Hint only; the portal makes the final call.
     expires_at_unix: i64,
+
+    /// For entries returned by `Store.load` (caller-owned copies).
+    pub fn deinit(self: Entry, allocator: std.mem.Allocator) void {
+        allocator.free(self.portal);
+        allocator.free(self.user);
+        std.crypto.secureZero(u8, @constCast(self.cookie));
+        allocator.free(self.cookie);
+    }
 };
 
 pub const Error = error{
@@ -22,15 +30,17 @@ pub const Store = struct {
 
     pub const VTable = struct {
         save: *const fn (ctx: *anyopaque, e: Entry) Error!void,
-        load: *const fn (ctx: *anyopaque, portal: []const u8, user: []const u8) Error!Entry,
+        /// Returns copies allocated with `allocator` — safe to hold across
+        /// further store calls. Caller frees via `Entry.deinit`.
+        load: *const fn (ctx: *anyopaque, allocator: std.mem.Allocator, portal: []const u8, user: []const u8) Error!Entry,
         forget: *const fn (ctx: *anyopaque, portal: []const u8, user: []const u8) Error!void,
     };
 
     pub fn save(self: Store, e: Entry) Error!void {
         return self.vtable.save(self.ptr, e);
     }
-    pub fn load(self: Store, portal: []const u8, user: []const u8) Error!Entry {
-        return self.vtable.load(self.ptr, portal, user);
+    pub fn load(self: Store, allocator: std.mem.Allocator, portal: []const u8, user: []const u8) Error!Entry {
+        return self.vtable.load(self.ptr, allocator, portal, user);
     }
     pub fn forget(self: Store, portal: []const u8, user: []const u8) Error!void {
         return self.vtable.forget(self.ptr, portal, user);
@@ -101,14 +111,18 @@ pub const MemoryStore = struct {
         });
     }
 
-    fn loadImpl(ctx: *anyopaque, portal: []const u8, user: []const u8) Error!Entry {
+    fn loadImpl(ctx: *anyopaque, allocator: std.mem.Allocator, portal: []const u8, user: []const u8) Error!Entry {
         const self: *MemoryStore = @ptrCast(@alignCast(ctx));
         const i = self.findIndex(portal, user) orelse return error.EntryNotFound;
         const e = self.entries.items[i];
+        const portal_dup = try allocator.dupe(u8, e.portal);
+        errdefer allocator.free(portal_dup);
+        const user_dup = try allocator.dupe(u8, e.user);
+        errdefer allocator.free(user_dup);
         return .{
-            .portal = e.portal,
-            .user = e.user,
-            .cookie = e.cookie,
+            .portal = portal_dup,
+            .user = user_dup,
+            .cookie = try allocator.dupe(u8, e.cookie),
             .expires_at_unix = e.expires_at_unix,
         };
     }

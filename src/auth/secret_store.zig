@@ -31,7 +31,9 @@ const schema: secret.Schema = .{
 
 pub const SecretStore = struct {
     allocator: std.mem.Allocator,
-    /// Strings returned by `load` live here; reset on each call.
+    /// Guards `scratch` — store calls may come from any connect job thread.
+    mu: std.Thread.Mutex = .{},
+    /// Temp NUL-terminated strings per call; reset on each call.
     scratch: std.heap.ArenaAllocator,
 
     pub fn init(allocator: std.mem.Allocator) SecretStore {
@@ -67,6 +69,8 @@ pub const SecretStore = struct {
 
     fn saveImpl(ctx: *anyopaque, e: cache.Entry) cache.Error!void {
         const self: *SecretStore = @ptrCast(@alignCast(ctx));
+        self.mu.lock();
+        defer self.mu.unlock();
         _ = self.scratch.reset(.retain_capacity);
         const arena = self.scratch.allocator();
 
@@ -100,8 +104,10 @@ pub const SecretStore = struct {
         }
     }
 
-    fn loadImpl(ctx: *anyopaque, portal: []const u8, user: []const u8) cache.Error!cache.Entry {
+    fn loadImpl(ctx: *anyopaque, allocator: std.mem.Allocator, portal: []const u8, user: []const u8) cache.Error!cache.Entry {
         const self: *SecretStore = @ptrCast(@alignCast(ctx));
+        self.mu.lock();
+        defer self.mu.unlock();
         _ = self.scratch.reset(.retain_capacity);
         const arena = self.scratch.allocator();
 
@@ -128,16 +134,22 @@ pub const SecretStore = struct {
         }) catch return error.EntryNotFound;
         defer parsed.deinit();
 
+        const portal_dup = try allocator.dupe(u8, portal);
+        errdefer allocator.free(portal_dup);
+        const user_dup = try allocator.dupe(u8, user);
+        errdefer allocator.free(user_dup);
         return .{
-            .portal = try arena.dupe(u8, portal),
-            .user = try arena.dupe(u8, user),
-            .cookie = try arena.dupe(u8, parsed.value.cookie),
+            .portal = portal_dup,
+            .user = user_dup,
+            .cookie = try allocator.dupe(u8, parsed.value.cookie),
             .expires_at_unix = parsed.value.expires_at_unix,
         };
     }
 
     fn forgetImpl(ctx: *anyopaque, portal: []const u8, user: []const u8) cache.Error!void {
         const self: *SecretStore = @ptrCast(@alignCast(ctx));
+        self.mu.lock();
+        defer self.mu.unlock();
         _ = self.scratch.reset(.retain_capacity);
         const arena = self.scratch.allocator();
 

@@ -525,14 +525,17 @@ pub const App = struct {
         hint_user: ?[]const u8,
     ) !Credential {
         if (hint_user) |u| {
-            if (self.secret_store.store().load(gateway_addr, u)) |entry| {
+            if (self.secret_store.store().load(self.allocator, gateway_addr, u)) |entry| {
                 if (cookie_cache.isUsable(entry, std.time.timestamp())) {
+                    // Take ownership of the copies instead of re-duping.
+                    self.allocator.free(entry.portal);
                     return .{
-                        .username = try self.allocator.dupe(u8, entry.user),
-                        .cookie = try self.allocator.dupe(u8, entry.cookie),
+                        .username = @constCast(entry.user),
+                        .cookie = @constCast(entry.cookie),
                         .from_cache = true,
                     };
                 }
+                entry.deinit(self.allocator);
             } else |err| switch (err) {
                 error.EntryNotFound => {},
                 else => std.log.warn("cookie cache load failed: {s}", .{@errorName(err)}),
