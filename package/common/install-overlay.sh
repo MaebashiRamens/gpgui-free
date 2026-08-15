@@ -22,9 +22,10 @@ is_our_stub() {
 
 # --- /usr/bin/gpgui ---
 if ! is_our_symlink /usr/bin/gpgui; then
-    if [ -e /usr/bin/gpgui ] && [ ! -L /usr/bin/gpgui ] &&
-        [ ! -e /usr/bin/gpgui.proprietary ]; then
-        mv /usr/bin/gpgui /usr/bin/gpgui.proprietary
+    if [ -e /usr/bin/gpgui ] && [ ! -L /usr/bin/gpgui ]; then
+        # A regular file here is a (re)installed upstream binary — refresh
+        # the backup so uninstall restores the newest version, not a stale one.
+        mv -f /usr/bin/gpgui /usr/bin/gpgui.proprietary
     else
         rm -f /usr/bin/gpgui
     fi
@@ -33,9 +34,8 @@ fi
 
 # --- /usr/bin/gpgui-helper ---
 if ! is_our_stub /usr/bin/gpgui-helper; then
-    if [ -e /usr/bin/gpgui-helper ] && [ ! -L /usr/bin/gpgui-helper ] &&
-        [ ! -e /usr/bin/gpgui-helper.proprietary ]; then
-        mv /usr/bin/gpgui-helper /usr/bin/gpgui-helper.proprietary
+    if [ -e /usr/bin/gpgui-helper ] && [ ! -L /usr/bin/gpgui-helper ]; then
+        mv -f /usr/bin/gpgui-helper /usr/bin/gpgui-helper.proprietary
     else
         rm -f /usr/bin/gpgui-helper
     fi
