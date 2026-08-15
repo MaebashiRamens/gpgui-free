@@ -14,15 +14,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG ZIG_VERSION=0.15.2
+# From https://ziglang.org/download/index.json — update together with ZIG_VERSION.
+ARG ZIG_SHA256=02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
 RUN curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
-    | tar -xJ -C /opt \
+        -o /tmp/zig.tar.xz \
+    && echo "${ZIG_SHA256}  /tmp/zig.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/zig.tar.xz -C /opt \
+    && rm /tmp/zig.tar.xz \
     && ln -s "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
 
 ARG LINUXDEPLOY_TAG=1-alpha-20251107-1
+ARG LINUXDEPLOY_SHA256=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+# The gtk plugin has no releases; pin a commit instead of `master`.
+ARG PLUGIN_GTK_COMMIT=7a3fbc31a9e5075073ff8790f26effbac5f84453
+ARG PLUGIN_GTK_SHA256=b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171
 RUN curl -fsSL "https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_TAG}/linuxdeploy-x86_64.AppImage" \
         -o /usr/local/bin/linuxdeploy \
-    && curl -fsSL https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh \
+    && echo "${LINUXDEPLOY_SHA256}  /usr/local/bin/linuxdeploy" | sha256sum -c - \
+    && curl -fsSL "https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/${PLUGIN_GTK_COMMIT}/linuxdeploy-plugin-gtk.sh" \
         -o /usr/local/bin/linuxdeploy-plugin-gtk \
+    && echo "${PLUGIN_GTK_SHA256}  /usr/local/bin/linuxdeploy-plugin-gtk" | sha256sum -c - \
     && chmod +x /usr/local/bin/linuxdeploy /usr/local/bin/linuxdeploy-plugin-gtk
 
 # linuxdeploy AppImages need FUSE; we use --appimage-extract-and-run

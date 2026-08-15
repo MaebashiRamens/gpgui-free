@@ -8,8 +8,13 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rm -rf /var/lib/apt/lists/*
 
 ARG ZIG_VERSION=0.15.2
+# From https://ziglang.org/download/index.json — update together with ZIG_VERSION.
+ARG ZIG_SHA256=02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
 RUN curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
-    | tar -xJ -C /opt \
+        -o /tmp/zig.tar.xz \
+    && echo "${ZIG_SHA256}  /tmp/zig.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/zig.tar.xz -C /opt \
+    && rm /tmp/zig.tar.xz \
     && ln -s "/opt/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
 
 ARG PKGVER=0.1.0

@@ -10,7 +10,9 @@ depends=('globalprotect-openconnect' 'glib2' 'gtk4' 'libadwaita' 'libsecret')
 makedepends=('zig=0.15.2' 'pkgconf' 'git')
 install=gpgui-free.install
 source=("$pkgname-$pkgver.tar.gz::https://github.com/MaebashiRamens/$pkgname/archive/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+# Fails closed until pinned at release (updpkgsums); the docker build
+# substitutes the hash of its locally generated tarball.
+sha256sums=('FILL-AT-RELEASE')
 
 build() {
     cd "$srcdir/$pkgname-$pkgver"
