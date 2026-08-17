@@ -48,3 +48,20 @@ fn findMessage(fields: []const glib.LogField) ?[]const u8 {
     }
     return null;
 }
+
+test "findMessage honors f_length instead of assuming NUL termination" {
+    const raw = "hello-world";
+    const fields = [_]glib.LogField{
+        .{ .f_key = "PRIORITY", .f_value = @ptrCast(raw.ptr), .f_length = -1 },
+        .{ .f_key = "MESSAGE", .f_value = @ptrCast(raw.ptr), .f_length = 5 },
+    };
+    try std.testing.expectEqualStrings("hello", findMessage(&fields).?);
+}
+
+test "findMessage spans NUL-terminated values when f_length is -1" {
+    const msg: [:0]const u8 = "abc";
+    const fields = [_]glib.LogField{
+        .{ .f_key = "MESSAGE", .f_value = @ptrCast(msg.ptr), .f_length = -1 },
+    };
+    try std.testing.expectEqualStrings("abc", findMessage(&fields).?);
+}

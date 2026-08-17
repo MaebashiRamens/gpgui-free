@@ -58,6 +58,13 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "build_options", .module = build_options_mod },
+            .{ .name = "glib", .module = gobject.module("glib2") },
+            .{ .name = "gobject", .module = gobject.module("gobject2") },
+            .{ .name = "gio", .module = gobject.module("gio2") },
+            .{ .name = "gdk", .module = gobject.module("gdk4") },
+            .{ .name = "gtk", .module = gobject.module("gtk4") },
+            .{ .name = "adw", .module = gobject.module("adw1") },
+            .{ .name = "secret", .module = gobject.module("secret1") },
         },
     });
     const unit_tests = b.addTest(.{ .root_module = test_mod });

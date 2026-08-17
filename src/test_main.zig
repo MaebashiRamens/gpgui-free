@@ -5,6 +5,7 @@ comptime {
     _ = @import("auth/gateway_login.zig");
     _ = @import("auth/portal_config.zig");
     _ = @import("app.zig");
+    _ = @import("log_filter.zig");
 
     // Pure black-box tests of public APIs.
     _ = @import("cli_test.zig");
