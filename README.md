@@ -19,6 +19,16 @@ zig fetch --save=gobject https://github.com/ianprime0509/zig-gobject/releases/do
 zig build
 ```
 
+## NixOS
+
+```nix
+inputs.gpgui-free.url = "github:MaebashiRamens/gpgui-free";
+inputs.gpgui-free.inputs.nixpkgs.follows = "nixpkgs";
+
+imports = [ inputs.gpgui-free.nixosModules.default ];
+programs.gpgui-free.enable = true;
+```
+
 ## License
 
 GPL-3.0-or-later.

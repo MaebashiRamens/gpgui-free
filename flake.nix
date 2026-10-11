@@ -14,6 +14,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    globalprotect-openconnect = {
+      url = "github:yuezk/GlobalProtect-openconnect/v2.5.4";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     zig-overlay = {
       url = "github:mitchellh/zig-overlay";
@@ -38,6 +42,7 @@
     zig-overlay,
     zls,
     treefmt-nix,
+    globalprotect-openconnect,
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
@@ -92,6 +97,8 @@
         };
 
         packages = {
+          default = pkgs.callPackage ./nix/package.nix {};
+          gpgui-free = self.packages.${system}.default;
           zig = zigPkg;
           zls = zlsPkg;
         };
@@ -99,5 +106,8 @@
         formatter = treefmtEval.config.build.wrapper;
         checks.formatting = treefmtEval.config.build.check self;
       }
-    );
+    )
+    // {
+      nixosModules.default = import ./nix/module.nix {inherit globalprotect-openconnect;};
+    };
 }
