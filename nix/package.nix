@@ -29,7 +29,8 @@ in
     dontConfigure = true;
     postPatch = ''
       substituteInPlace src/auth/gpauth.zig --replace-fail /usr/bin/gpauth /run/current-system/sw/bin/gpauth
-      substituteInPlace assets/applications/gpgui-free.desktop --replace-fail 'Exec=gpgui-free' 'Exec=gpclient launch-gui'
+      substituteInPlace assets/applications/gpgui-free.desktop --replace-fail 'Exec=gpgui-free' 'Exec=gpclient launch-gui %u'
+      echo 'MimeType=x-scheme-handler/globalprotectcallback;' >> assets/applications/gpgui-free.desktop
     '';
     preBuild = ''
       export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"

@@ -49,8 +49,7 @@
       cp -r packaging/files/usr/share "$out/share"
       cp -r packaging/files/usr/lib "$out/lib"
       cp -r packaging/files/usr/libexec "$out/libexec"
-      substituteInPlace "$out/share/applications/gpgui.desktop" \
-        --replace-fail /usr/bin/gpclient "$out/bin/gpclient"
+      rm "$out/share/applications/gpgui.desktop"
       substituteInPlace "$out/share/polkit-1/actions/com.yuezk.gpgui.policy" \
         --replace-fail /usr/bin/gpservice "$out/bin/gpservice"
       substituteInPlace "$out/lib/NetworkManager/dispatcher.d/pre-down.d/gpclient.down" \
